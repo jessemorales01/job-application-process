@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import Customer, Contact, Interaction, Stage, Application
+from .models import Customer, Contact, Interaction, Stage, Application, JobOffer
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -101,3 +101,13 @@ class ApplicationSerializer(serializers.ModelSerializer):
                 validated_data['stage'] = first_stage
         
         return super().create(validated_data)
+
+
+class JobOfferSerializer(serializers.ModelSerializer):
+    """Serializer for JobOffer model"""
+    created_by_username = serializers.CharField(source='created_by.username', read_only=True)
+
+    class Meta:
+        model = JobOffer
+        fields = '__all__'
+        read_only_fields = ('created_by', 'created_at', 'updated_at')
