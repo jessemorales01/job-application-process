@@ -7,6 +7,215 @@ from .serializers import LeadSerializer, STAGE_THRESHOLD_LOW, STAGE_THRESHOLD_ME
 from .ml_service import predict_win_score
 
 
+class JobOfferModelTests(TestCase):
+    """Test the JobOffer model"""
+    
+    def setUp(self):
+        """Set up test user for created_by field"""
+        self.user = User.objects.create_user(
+            username='testuser',
+            password='testpass123'
+        )
+    
+    def test_can_create_job_offer(self):
+        """Test that we can create a JobOffer with required fields"""
+        from .models import JobOffer
+        
+        job_offer = JobOffer.objects.create(
+            company_name="Tech Corp",
+            position="Software Engineer",
+            salary_range="100k-150k"
+        )
+        
+        self.assertEqual(job_offer.company_name, "Tech Corp")
+        self.assertEqual(job_offer.position, "Software Engineer")
+        self.assertEqual(job_offer.salary_range, "100k-150k")
+        self.assertIsNotNone(job_offer.id)
+    
+    def test_job_offer_with_created_by(self):
+        """Test creating JobOffer with created_by user"""
+        from .models import JobOffer
+        
+        job_offer = JobOffer.objects.create(
+            company_name="Tech Corp",
+            position="Software Engineer",
+            salary_range="100k-150k",
+            created_by=self.user
+        )
+        
+        self.assertEqual(job_offer.created_by, self.user)
+        self.assertEqual(job_offer.created_by.username, 'testuser')
+    
+    def test_job_offer_without_created_by(self):
+        """Test that created_by can be None (SET_NULL behavior)"""
+        from .models import JobOffer
+        
+        job_offer = JobOffer.objects.create(
+            company_name="Tech Corp",
+            position="Software Engineer",
+            salary_range="100k-150k",
+            created_by=None
+        )
+        
+        self.assertIsNone(job_offer.created_by)
+    
+    def test_job_offer_str_method(self):
+        """Test the __str__ method returns correct format"""
+        from .models import JobOffer
+        
+        job_offer = JobOffer.objects.create(
+            company_name="Tech Corp",
+            position="Software Engineer",
+            salary_range="100k-150k"
+        )
+        
+        expected_str = "Software Engineer at Tech Corp"
+        self.assertEqual(str(job_offer), expected_str)
+    
+    def test_job_offer_auto_timestamps(self):
+        """Test that created_at and updated_at are auto-generated"""
+        from .models import JobOffer
+        from django.utils import timezone
+        
+        job_offer = JobOffer.objects.create(
+            company_name="Tech Corp",
+            position="Software Engineer",
+            salary_range="100k-150k"
+        )
+        
+        self.assertIsNotNone(job_offer.created_at)
+        self.assertIsNotNone(job_offer.updated_at)
+        self.assertLessEqual(job_offer.created_at, timezone.now())
+        self.assertLessEqual(job_offer.updated_at, timezone.now())
+    
+    def test_job_offer_updated_at_changes_on_save(self):
+        """Test that updated_at changes when object is saved"""
+        from .models import JobOffer
+        import time
+        
+        job_offer = JobOffer.objects.create(
+            company_name="Tech Corp",
+            position="Software Engineer",
+            salary_range="100k-150k"
+        )
+        
+        original_updated_at = job_offer.updated_at
+        time.sleep(0.1)  # Small delay to ensure timestamp difference
+        
+        job_offer.position = "Senior Software Engineer"
+        job_offer.save()
+        
+        self.assertGreater(job_offer.updated_at, original_updated_at)
+    
+    def test_job_offer_ordering(self):
+        """Test that JobOffers are ordered by -created_at (newest first)"""
+        from .models import JobOffer
+        import time
+        
+        # Create first job offer
+        job1 = JobOffer.objects.create(
+            company_name="Company A",
+            position="Position A",
+            salary_range="50k-70k"
+        )
+        time.sleep(0.1)
+        
+        # Create second job offer
+        job2 = JobOffer.objects.create(
+            company_name="Company B",
+            position="Position B",
+            salary_range="80k-100k"
+        )
+        
+        # Query all job offers
+        all_offers = list(JobOffer.objects.all())
+        
+        # Most recent should be first
+        self.assertEqual(all_offers[0], job2)
+        self.assertEqual(all_offers[1], job1)
+    
+    def test_job_offer_max_length_constraints(self):
+        """Test that max_length constraints are enforced"""
+        from .models import JobOffer
+        from django.core.exceptions import ValidationError
+        
+        # Test company_name max_length (200)
+        long_company_name = "A" * 201
+        job_offer = JobOffer(
+            company_name=long_company_name,
+            position="Test Position",
+            salary_range="50k-70k"
+        )
+        
+        with self.assertRaises(Exception):  # Will raise ValidationError or DatabaseError
+            job_offer.full_clean()
+        
+        # Test position max_length (200)
+        long_position = "B" * 201
+        job_offer = JobOffer(
+            company_name="Test Company",
+            position=long_position,
+            salary_range="50k-70k"
+        )
+        
+        with self.assertRaises(Exception):
+            job_offer.full_clean()
+        
+        # Test salary_range max_length (100)
+        long_salary_range = "C" * 101
+        job_offer = JobOffer(
+            company_name="Test Company",
+            position="Test Position",
+            salary_range=long_salary_range
+        )
+        
+        with self.assertRaises(Exception):
+            job_offer.full_clean()
+    
+    def test_job_offer_user_relationship(self):
+        """Test the reverse relationship from User to JobOffer"""
+        from .models import JobOffer
+        
+        # Create job offers for the user
+        job1 = JobOffer.objects.create(
+            company_name="Company A",
+            position="Position A",
+            salary_range="50k-70k",
+            created_by=self.user
+        )
+        job2 = JobOffer.objects.create(
+            company_name="Company B",
+            position="Position B",
+            salary_range="80k-100k",
+            created_by=self.user
+        )
+        
+        # Test reverse relationship
+        user_job_offers = self.user.job_offers.all()
+        self.assertEqual(user_job_offers.count(), 2)
+        self.assertIn(job1, user_job_offers)
+        self.assertIn(job2, user_job_offers)
+    
+    def test_job_offer_user_set_null_on_delete(self):
+        """Test that created_by is set to NULL when user is deleted"""
+        from .models import JobOffer
+        
+        job_offer = JobOffer.objects.create(
+            company_name="Tech Corp",
+            position="Software Engineer",
+            salary_range="100k-150k",
+            created_by=self.user
+        )
+        
+        job_offer_id = job_offer.id
+        self.user.delete()
+        
+        # Refresh from database
+        job_offer.refresh_from_db()
+        self.assertIsNone(job_offer.created_by)
+        self.assertEqual(job_offer.id, job_offer_id)  # JobOffer still exists
+
+
 class StageAutoAssignTests(TestCase):
     """Test the auto-assign logic in LeadSerializer.get_stage_by_value()"""
     

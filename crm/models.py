@@ -110,3 +110,18 @@ class Lead(models.Model):
     class Meta:
         ordering = ['-created_at']
 
+
+class JobOffer(models.Model):
+    """JobOffer model to store job offer information"""
+    company_name = models.CharField(max_length=200)
+    position = models.CharField(max_length=200)
+    salary_range = models.CharField(max_length=100)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='job_offers')
+
+    def __str__(self):
+        return f"{self.position} at {self.company_name}"
+
+    class Meta:
+        ordering = ['-created_at']
