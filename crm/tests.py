@@ -887,3 +887,194 @@ class AssessmentModelTests(TestCase):
         # Should be ordered by deadline (earliest first)
         self.assertEqual(all_assessments[0], assessment2)
         self.assertEqual(all_assessments[1], assessment1)
+
+
+class AssessmentAPITests(APITestCase):
+    """Test Assessment API endpoints"""
+    
+    def setUp(self):
+        """Set up test user, stage, and application for Assessment API tests"""
+        self.user = User.objects.create_user(
+            username='testuser',
+            password='testpass123'
+        )
+        self.client.force_authenticate(user=self.user)
+        from .models import Stage, Application
+        self.stage = Stage.objects.create(name="Applied", order=1)
+        self.application = Application.objects.create(
+            company_name='Tech Corp',
+            position='Software Engineer',
+            stack='Python, Django, React',
+            salary_range='100k-150k',
+            stage=self.stage,
+            created_by=self.user
+        )
+    
+    def test_can_create_assessment(self):
+        """Test creating an assessment via API"""
+        from datetime import date, timedelta
+        
+        deadline = date.today() + timedelta(days=7)
+        response = self.client.post('/api/assessments/', {
+            'application': self.application.id,
+            'deadline': deadline.isoformat(),
+            'website_url': 'https://assessment.example.com',
+            'recruiter_contact_name': 'John Doe',
+            'recruiter_contact_email': 'john@example.com',
+            'recruiter_contact_phone': '555-1234',
+            'notes': 'Take-home project for backend position'
+        })
+        
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['application'], self.application.id)
+        self.assertEqual(response.data['deadline'], deadline.isoformat())
+        self.assertEqual(response.data['website_url'], 'https://assessment.example.com')
+        self.assertEqual(response.data['recruiter_contact_name'], 'John Doe')
+        self.assertEqual(response.data['recruiter_contact_email'], 'john@example.com')
+        self.assertEqual(response.data['recruiter_contact_phone'], '555-1234')
+        self.assertEqual(response.data['notes'], 'Take-home project for backend position')
+        self.assertEqual(response.data['status'], 'pending')
+    
+    def test_assessment_requires_application(self):
+        """Test that application field is required when creating Assessment"""
+        from datetime import date, timedelta
+        
+        deadline = date.today() + timedelta(days=7)
+        response = self.client.post('/api/assessments/', {
+            'deadline': deadline.isoformat()
+        })
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('application', response.data)
+    
+    def test_assessment_requires_deadline(self):
+        """Test that deadline field is required when creating Assessment"""
+        response = self.client.post('/api/assessments/', {
+            'application': self.application.id
+        })
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('deadline', response.data)
+    
+    def test_can_list_assessments(self):
+        """Test listing assessments via API"""
+        from .models import Assessment, Application
+        from datetime import date, timedelta
+        
+        app2 = Application.objects.create(
+            company_name='Another Corp',
+            stage=self.stage,
+            created_by=self.user
+        )
+        
+        deadline1 = date.today() + timedelta(days=7)
+        deadline2 = date.today() + timedelta(days=14)
+        
+        Assessment.objects.create(
+            application=self.application,
+            deadline=deadline1,
+            created_by=self.user
+        )
+        Assessment.objects.create(
+            application=app2,
+            deadline=deadline2,
+            created_by=self.user
+        )
+        
+        response = self.client.get('/api/assessments/')
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 2)
+    
+    def test_can_update_assessment(self):
+        """Test updating an assessment via API"""
+        from .models import Assessment
+        from datetime import date, timedelta
+        
+        deadline = date.today() + timedelta(days=7)
+        assessment = Assessment.objects.create(
+            application=self.application,
+            deadline=deadline,
+            status='pending',
+            created_by=self.user
+        )
+        
+        new_deadline = date.today() + timedelta(days=10)
+        response = self.client.patch(f'/api/assessments/{assessment.id}/', {
+            'status': 'in_progress',
+            'deadline': new_deadline.isoformat(),
+            'website_url': 'https://new-assessment.example.com'
+        })
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['status'], 'in_progress')
+        self.assertEqual(response.data['deadline'], new_deadline.isoformat())
+        self.assertEqual(response.data['website_url'], 'https://new-assessment.example.com')
+    
+    def test_can_delete_assessment(self):
+        """Test deleting an assessment via API"""
+        from .models import Assessment
+        from datetime import date, timedelta
+        
+        deadline = date.today() + timedelta(days=7)
+        assessment = Assessment.objects.create(
+            application=self.application,
+            deadline=deadline,
+            created_by=self.user
+        )
+        
+        response = self.client.delete(f'/api/assessments/{assessment.id}/')
+        
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Assessment.objects.filter(id=assessment.id).exists())
+    
+    def test_user_only_sees_own_assessments(self):
+        """Test that users only see assessments they created"""
+        from .models import Assessment, Application
+        from datetime import date, timedelta
+        
+        other_user = User.objects.create_user(
+            username='otheruser',
+            password='testpass123'
+        )
+        
+        other_app = Application.objects.create(
+            company_name='Other Company',
+            stage=self.stage,
+            created_by=other_user
+        )
+        
+        deadline = date.today() + timedelta(days=7)
+        Assessment.objects.create(
+            application=self.application,
+            deadline=deadline,
+            created_by=self.user
+        )
+        Assessment.objects.create(
+            application=other_app,
+            deadline=deadline,
+            created_by=other_user
+        )
+        
+        response = self.client.get('/api/assessments/')
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]['application'], self.application.id)
+    
+    def test_assessment_optional_fields(self):
+        """Test that optional fields can be omitted when creating Assessment"""
+        from datetime import date, timedelta
+        
+        deadline = date.today() + timedelta(days=7)
+        response = self.client.post('/api/assessments/', {
+            'application': self.application.id,
+            'deadline': deadline.isoformat()
+        })
+        
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['website_url'], '')
+        self.assertEqual(response.data['recruiter_contact_name'], '')
+        self.assertEqual(response.data['recruiter_contact_email'], '')
+        self.assertEqual(response.data['recruiter_contact_phone'], '')
+        self.assertEqual(response.data['notes'], '')
