@@ -40,17 +40,26 @@ class Contact(models.Model):
 
 
 class Interaction(models.Model):
-    """Interaction model to track customer interactions"""
+    """Interaction model to track interactions with companies/jobs"""
     INTERACTION_TYPES = [
         ('email', 'Email'),
         ('phone', 'Phone Call'),
         ('meeting', 'Meeting'),
+        ('interview', 'Interview'),
+        ('follow-up', 'Follow-up'),
         ('other', 'Other'),
     ]
 
-    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name='interactions')
+    DIRECTION_CHOICES = [
+        ('inbound', 'Inbound'),
+        ('outbound', 'Outbound'),
+    ]
+
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name='interactions', null=True, blank=True)
     contact = models.ForeignKey(Contact, on_delete=models.SET_NULL, null=True, blank=True, related_name='interactions')
+    application = models.ForeignKey('Application', on_delete=models.CASCADE, related_name='interactions', null=True, blank=True)
     interaction_type = models.CharField(max_length=20, choices=INTERACTION_TYPES)
+    direction = models.CharField(max_length=10, choices=DIRECTION_CHOICES, default='outbound')
     subject = models.CharField(max_length=200)
     notes = models.TextField()
     interaction_date = models.DateTimeField()
@@ -59,17 +68,21 @@ class Interaction(models.Model):
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='interactions')
 
     def __str__(self):
-        return f"{self.interaction_type} - {self.customer.name} - {self.subject}"
+        if self.application:
+            return f"{self.interaction_type} - {self.application.company_name} - {self.subject}"
+        elif self.customer:
+            return f"{self.interaction_type} - {self.customer.name} - {self.subject}"
+        return f"{self.interaction_type} - {self.subject}"
 
     class Meta:
         ordering = ['-interaction_date']
 
 
 class Stage(models.Model):
-    """Pipeline stage for leads/deals"""
+    """Pipeline stage for job applications"""
 
     name = models.CharField(max_length=100)
-    order = models.PositiveIntegerField(default=0) # this if for left to right sorting
+    order = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -80,32 +93,23 @@ class Stage(models.Model):
         ordering = ['order']
 
 
-class Lead(models.Model):
-    """Lead model to track potential customers"""
-    STATUS_CHOICES = [
-        ('new', 'New'),
-        ('contacted', 'Contacted'),
-        ('qualified', 'Qualified'),
-        ('converted', 'Converted'),
-        ('lost', 'Lost'),
-    ]
-
-    name = models.CharField(max_length=200)
-    email = models.EmailField()
-    phone = models.CharField(max_length=20, blank=True)
-    company = models.CharField(max_length=200, blank=True)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='new')
-    stage = models.ForeignKey(Stage, on_delete=models.SET_NULL, null=True, blank=True, related_name='leads')
-    source = models.CharField(max_length=100, blank=True)
+class Application(models.Model):
+    """Application model to track job applications"""
+    company_name = models.CharField(max_length=200)
+    stack = models.TextField(blank=True)
+    salary_range = models.CharField(max_length=100, blank=True)
+    email = models.EmailField(blank=True)
+    phone_number = models.CharField(max_length=20, blank=True)
+    where_applied = models.CharField(max_length=100, blank=True)
+    stage = models.ForeignKey(Stage, on_delete=models.SET_NULL, null=True, blank=True, related_name='applications')
     notes = models.TextField(blank=True)
-    estimated_value = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    applied_date = models.DateField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='leads')
-    win_score = models.FloatField(null=True, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='applications')
 
     def __str__(self):
-        return f"{self.name} - {self.status}"
+        return f"{self.company_name} - {self.stage.name if self.stage else 'No Stage'}"
 
     class Meta:
         ordering = ['-created_at']
