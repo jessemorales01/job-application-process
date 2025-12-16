@@ -356,3 +356,112 @@ class ApplicationMovementTests(APITestCase):
         self.assertEqual(response.data['company_name'], original_company_name)
         self.assertEqual(response.data['email'], original_email)
         self.assertEqual(response.data['salary_range'], '100k-150k')
+
+
+class JobOfferAPITests(APITestCase):
+    """Test JobOffer API endpoints"""
+    
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='testuser',
+            password='testpass123'
+        )
+        self.client.force_authenticate(user=self.user)
+    
+    def test_can_create_job_offer(self):
+        """Test creating a job offer via API"""
+        response = self.client.post('/api/job-offers/', {
+            'company_name': 'Tech Corp',
+            'position': 'Software Engineer',
+            'salary_range': '100k-150k'
+        })
+        
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['company_name'], 'Tech Corp')
+        self.assertEqual(response.data['position'], 'Software Engineer')
+        self.assertEqual(response.data['salary_range'], '100k-150k')
+    
+    def test_can_list_job_offers(self):
+        """Test listing job offers via API"""
+        from .models import JobOffer
+        
+        JobOffer.objects.create(
+            company_name='Company A',
+            position='Position A',
+            salary_range='80k-100k',
+            created_by=self.user
+        )
+        JobOffer.objects.create(
+            company_name='Company B',
+            position='Position B',
+            salary_range='120k-150k',
+            created_by=self.user
+        )
+        
+        response = self.client.get('/api/job-offers/')
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 2)
+    
+    def test_can_update_job_offer(self):
+        """Test updating a job offer via API"""
+        from .models import JobOffer
+        
+        job_offer = JobOffer.objects.create(
+            company_name='Tech Corp',
+            position='Software Engineer',
+            salary_range='100k-150k',
+            created_by=self.user
+        )
+        
+        response = self.client.patch(f'/api/job-offers/{job_offer.id}/', {
+            'salary_range': '120k-160k'
+        })
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['salary_range'], '120k-160k')
+        self.assertEqual(response.data['company_name'], 'Tech Corp')
+    
+    def test_can_delete_job_offer(self):
+        """Test deleting a job offer via API"""
+        from .models import JobOffer
+        
+        job_offer = JobOffer.objects.create(
+            company_name='Tech Corp',
+            position='Software Engineer',
+            salary_range='100k-150k',
+            created_by=self.user
+        )
+        
+        response = self.client.delete(f'/api/job-offers/{job_offer.id}/')
+        
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(JobOffer.objects.filter(id=job_offer.id).exists())
+    
+    def test_user_only_sees_own_job_offers(self):
+        """Test that users only see job offers they created"""
+        from .models import JobOffer
+        
+        other_user = User.objects.create_user(
+            username='otheruser',
+            password='testpass123'
+        )
+        
+        JobOffer.objects.create(
+            company_name='My Company',
+            position='My Position',
+            salary_range='100k',
+            created_by=self.user
+        )
+        JobOffer.objects.create(
+            company_name='Other Company',
+            position='Other Position',
+            salary_range='200k',
+            created_by=other_user
+        )
+        
+        response = self.client.get('/api/job-offers/')
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]['company_name'], 'My Company')
