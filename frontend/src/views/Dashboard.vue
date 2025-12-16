@@ -12,7 +12,7 @@
       <v-list>
         <v-list-item to="/dashboard" prepend-icon="mdi-view-dashboard" title="Dashboard"></v-list-item>
         <v-list-item to="/job-offers" prepend-icon="mdi-briefcase-check" title="Job Offers"></v-list-item>
-        <v-list-item to="/leads" prepend-icon="mdi-trending-up" title="Leads"></v-list-item>
+        <v-list-item to="/applications" prepend-icon="mdi-briefcase" title="Applications"></v-list-item>
       </v-list>
     </v-navigation-drawer>
 
