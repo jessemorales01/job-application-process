@@ -59,15 +59,6 @@
               v-model="form.position"
               label="Position"
             ></v-text-field>
-            <v-select
-              v-model="form.customer_ids"
-              :items="customers"
-              item-title="name"
-              item-value="id"
-              label="Associated Customers"
-              multiple
-              chips
-            ></v-select>
           </v-form>
         </v-card-text>
         <v-card-actions>
@@ -92,7 +83,6 @@ export default {
   data() {
     return {
       contacts: [],
-      customers: [],
       loading: false,
       dialog: false,
       editMode: false,
@@ -109,14 +99,12 @@ export default {
         last_name: '',
         email: '',
         phone: '',
-        position: '',
-        customer_ids: []
+        position: ''
       }
     }
   },
   async mounted() {
     await this.loadContacts()
-    await this.loadCustomers()
   },
   methods: {
     async loadContacts() {
@@ -130,22 +118,10 @@ export default {
         this.loading = false
       }
     },
-    async loadCustomers() {
-      try {
-        const response = await api.get('/customers/')
-        this.customers = response.data
-      } catch (error) {
-        console.error('Error loading customers:', error)
-      }
-    },
     openDialog(contact = null) {
       if (contact) {
         this.editMode = true
         this.form = { ...contact }
-        // Convert customers array to customer_ids array
-        if (contact.customers && Array.isArray(contact.customers)) {
-          this.form.customer_ids = contact.customers
-        }
       } else {
         this.editMode = false
         this.form = {
@@ -153,8 +129,7 @@ export default {
           last_name: '',
           email: '',
           phone: '',
-          position: '',
-          customer_ids: []
+          position: ''
         }
       }
       this.dialog = true

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import Customer, Contact, Interaction, Stage, Application, JobOffer
+from .models import Contact, Interaction, Stage, Application, JobOffer
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -22,26 +22,9 @@ class UserSerializer(serializers.ModelSerializer):
         return user
 
 
-class CustomerSerializer(serializers.ModelSerializer):
-    """Serializer for Customer model"""
-    created_by_username = serializers.CharField(source='created_by.username', read_only=True)
-    contacts_count = serializers.SerializerMethodField()
-
-    class Meta:
-        model = Customer
-        fields = '__all__'
-        read_only_fields = ('created_by', 'created_at', 'updated_at')
-
-    def get_contacts_count(self, obj):
-        return obj.contacts.count()
-
-
 class ContactSerializer(serializers.ModelSerializer):
     """Serializer for Contact model"""
     created_by_username = serializers.CharField(source='created_by.username', read_only=True)
-    customer_ids = serializers.PrimaryKeyRelatedField(
-        many=True, queryset=Customer.objects.all(), source='customers', required=False
-    )
 
     class Meta:
         model = Contact
@@ -51,7 +34,6 @@ class ContactSerializer(serializers.ModelSerializer):
 
 class InteractionSerializer(serializers.ModelSerializer):
     """Serializer for Interaction model"""
-    customer_name = serializers.CharField(source='customer.name', read_only=True)
     contact_name = serializers.SerializerMethodField()
     application_company_name = serializers.CharField(source='application.company_name', read_only=True)
     created_by_username = serializers.CharField(source='created_by.username', read_only=True)

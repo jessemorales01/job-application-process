@@ -2,7 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import Login from '../views/Login.vue'
 import Signup from '../views/Signup.vue'
 import Dashboard from '../views/Dashboard.vue'
-import Customers from '../views/Customers.vue'
+import JobOffers from '../views/JobOffers.vue'
 import Contacts from '../views/Contacts.vue'
 import Interactions from '../views/Interactions.vue'
 import Applications from '../views/Applications.vue'
@@ -31,9 +31,9 @@ const routes = [
     meta: { requiresAuth: true }
   },
   {
-    path: '/customers',
-    name: 'Customers',
-    component: Customers,
+    path: '/job-offers',
+    name: 'JobOffers',
+    component: JobOffers,
     meta: { requiresAuth: true }
   },
   {

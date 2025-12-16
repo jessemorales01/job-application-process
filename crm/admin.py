@@ -1,12 +1,5 @@
 from django.contrib import admin
-from .models import Customer, Contact, Interaction, Stage, Application
-
-
-@admin.register(Customer)
-class CustomerAdmin(admin.ModelAdmin):
-    list_display = ('name', 'email', 'company', 'phone', 'created_at')
-    search_fields = ('name', 'email', 'company')
-    list_filter = ('created_at',)
+from .models import Contact, Interaction, Stage, Application
 
 
 @admin.register(Contact)
@@ -18,8 +11,8 @@ class ContactAdmin(admin.ModelAdmin):
 
 @admin.register(Interaction)
 class InteractionAdmin(admin.ModelAdmin):
-    list_display = ('application', 'customer', 'contact', 'interaction_type', 'subject', 'interaction_date')
-    search_fields = ('application__company_name', 'customer__name', 'subject')
+    list_display = ('application', 'contact', 'interaction_type', 'subject', 'interaction_date')
+    search_fields = ('application__company_name', 'subject')
     list_filter = ('interaction_type', 'interaction_date')
 
 @admin.register(Stage)

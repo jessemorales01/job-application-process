@@ -11,7 +11,7 @@
     <v-navigation-drawer permanent>
       <v-list>
         <v-list-item to="/dashboard" prepend-icon="mdi-view-dashboard" title="Dashboard"></v-list-item>
-        <v-list-item to="/customers" prepend-icon="mdi-account-group" title="Customers"></v-list-item>
+        <v-list-item to="/job-offers" prepend-icon="mdi-briefcase-check" title="Job Offers"></v-list-item>
         <v-list-item to="/contacts" prepend-icon="mdi-card-account-details" title="Contacts"></v-list-item>
         <v-list-item to="/interactions" prepend-icon="mdi-comment-text-multiple" title="Interactions"></v-list-item>
         <v-list-item to="/leads" prepend-icon="mdi-trending-up" title="Leads"></v-list-item>
@@ -25,11 +25,11 @@
           <v-col cols="12" md="3">
             <v-card>
               <v-card-title>
-                <v-icon left>mdi-account-group</v-icon>
-                Customers
+                <v-icon left>mdi-briefcase-check</v-icon>
+                Job Offers
               </v-card-title>
               <v-card-text>
-                <div class="text-h4">{{ stats.customers }}</div>
+                <div class="text-h4">{{ stats.jobOffers }}</div>
               </v-card-text>
             </v-card>
           </v-col>
@@ -80,7 +80,7 @@ export default {
   data() {
     return {
       stats: {
-        customers: 0,
+        jobOffers: 0,
         contacts: 0,
         interactions: 0,
         applications: 0
@@ -93,13 +93,13 @@ export default {
   methods: {
     async loadStats() {
       try {
-        const [customers, contacts, interactions, applications] = await Promise.all([
-          api.get('/customers/'),
+        const [jobOffers, contacts, interactions, applications] = await Promise.all([
+          api.get('/job-offers/'),
           api.get('/contacts/'),
           api.get('/interactions/'),
           api.get('/applications/')
         ])
-        this.stats.customers = customers.data.length
+        this.stats.jobOffers = jobOffers.data.length
         this.stats.contacts = contacts.data.length
         this.stats.interactions = interactions.data.length
         this.stats.applications = applications.data.length

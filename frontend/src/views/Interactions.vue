@@ -42,13 +42,6 @@
               label="Application (Optional)"
             ></v-select>
             <v-select
-              v-model="form.customer"
-              :items="customers"
-              item-title="name"
-              item-value="id"
-              label="Customer (Optional)"
-            ></v-select>
-            <v-select
               v-model="form.contact"
               :items="contacts"
               item-title="full_name"
@@ -106,7 +99,6 @@ export default {
   data() {
     return {
       interactions: [],
-      customers: [],
       contacts: [],
       loading: false,
       dialog: false,
@@ -126,7 +118,6 @@ export default {
       applications: [],
       headers: [
         { title: 'Application', key: 'application_company_name' },
-        { title: 'Customer', key: 'customer_name' },
         { title: 'Contact', key: 'contact_name' },
         { title: 'Type', key: 'interaction_type' },
         { title: 'Subject', key: 'subject' },
@@ -135,7 +126,6 @@ export default {
       ],
       form: {
         application: null,
-        customer: null,
         contact: null,
         interaction_type: '',
         direction: 'outbound',
@@ -148,7 +138,6 @@ export default {
   async mounted() {
     await this.loadInteractions()
     await this.loadApplications()
-    await this.loadCustomers()
     await this.loadContacts()
   },
   methods: {
@@ -161,14 +150,6 @@ export default {
         console.error('Error loading interactions:', error)
       } finally {
         this.loading = false
-      }
-    },
-    async loadCustomers() {
-      try {
-        const response = await api.get('/customers/')
-        this.customers = response.data
-      } catch (error) {
-        console.error('Error loading customers:', error)
       }
     },
     async loadContacts() {
@@ -202,7 +183,6 @@ export default {
           .slice(0, 16)
         this.form = {
           application: null,
-          customer: null,
           contact: null,
           interaction_type: '',
           direction: 'outbound',
