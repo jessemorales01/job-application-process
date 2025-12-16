@@ -72,7 +72,8 @@ class Interaction(models.Model):
             return f"{self.interaction_type} - {self.application.company_name} - {self.subject}"
         elif self.customer:
             return f"{self.interaction_type} - {self.customer.name} - {self.subject}"
-        return f"{self.interaction_type} - {self.subject}"
+        else:
+            return f"{self.interaction_type} - {self.subject}"
 
     class Meta:
         ordering = ['-interaction_date']
@@ -96,6 +97,7 @@ class Stage(models.Model):
 class Application(models.Model):
     """Application model to track job applications"""
     company_name = models.CharField(max_length=200)
+    position = models.CharField(max_length=200, blank=True)
     stack = models.TextField(blank=True)
     salary_range = models.CharField(max_length=100, blank=True)
     email = models.EmailField(blank=True)
@@ -109,7 +111,8 @@ class Application(models.Model):
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='applications')
 
     def __str__(self):
-        return f"{self.company_name} - {self.stage.name if self.stage else 'No Stage'}"
+        position_str = f" - {self.position}" if self.position else ""
+        return f"{self.company_name}{position_str} - {self.stage.name if self.stage else 'No Stage'}"
 
     class Meta:
         ordering = ['-created_at']

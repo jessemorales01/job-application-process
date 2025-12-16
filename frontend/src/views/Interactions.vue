@@ -27,7 +27,6 @@
       </v-card-text>
     </v-card>
 
-    <!-- Dialog for Add/Edit -->
     <v-dialog v-model="dialog" max-width="600px">
       <v-card>
         <v-card-title>
@@ -66,7 +65,6 @@
               v-model="form.direction"
               :items="directionOptions"
               label="Direction"
-              required
             ></v-select>
             <v-text-field
               v-model="form.subject"
@@ -113,25 +111,24 @@ export default {
       loading: false,
       dialog: false,
       editMode: false,
-      applications: [],
       interactionTypes: [
         { title: 'Email', value: 'email' },
         { title: 'Phone Call', value: 'phone' },
         { title: 'Meeting', value: 'meeting' },
         { title: 'Interview', value: 'interview' },
-        { title: 'Follow-up', value: 'follow-up' },
+        { title: 'Follow-up', value: 'follow_up' },
         { title: 'Other', value: 'other' }
       ],
       directionOptions: [
         { title: 'Inbound', value: 'inbound' },
         { title: 'Outbound', value: 'outbound' }
       ],
+      applications: [],
       headers: [
         { title: 'Application', key: 'application_company_name' },
         { title: 'Customer', key: 'customer_name' },
         { title: 'Contact', key: 'contact_name' },
         { title: 'Type', key: 'interaction_type' },
-        { title: 'Direction', key: 'direction' },
         { title: 'Subject', key: 'subject' },
         { title: 'Date', key: 'interaction_date' },
         { title: 'Actions', key: 'actions', sortable: false }

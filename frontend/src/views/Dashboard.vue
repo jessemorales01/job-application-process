@@ -1,7 +1,7 @@
 <template>
   <v-app>
     <v-app-bar color="primary" dark>
-      <v-app-bar-title>CRM Dashboard</v-app-bar-title>
+      <v-app-bar-title>Job Application Tracker</v-app-bar-title>
       <v-spacer></v-spacer>
       <v-btn icon @click="logout">
         <v-icon>mdi-logout</v-icon>
@@ -20,7 +20,7 @@
 
     <v-main>
       <v-container>
-        <h1>Welcome to CRM Dashboard</h1>
+        <h1>Welcome to Job Application Tracker</h1>
         <v-row class="mt-5">
           <v-col cols="12" md="3">
             <v-card>

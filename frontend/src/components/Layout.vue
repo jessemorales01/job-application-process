@@ -1,7 +1,7 @@
 <template>
   <v-app>
     <v-app-bar color="primary" dark>
-      <v-app-bar-title>CRM - {{ title }}</v-app-bar-title>
+      <v-app-bar-title>Job Application Tracker - {{ title }}</v-app-bar-title>
       <v-spacer></v-spacer>
       <v-btn icon @click="logout">
         <v-icon>mdi-logout</v-icon>
