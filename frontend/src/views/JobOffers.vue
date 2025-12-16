@@ -76,6 +76,11 @@
               :readonly="!!form.application"
             ></v-text-field>
             <v-text-field
+              v-model="form.offered"
+              label="Offered"
+              hint="The actual salary/compensation offered (e.g., '125k', '110k + equity')"
+            ></v-text-field>
+            <v-text-field
               v-model="form.offer_date"
               label="Offer Date"
               type="date"
@@ -137,6 +142,7 @@ export default {
         { title: 'Company', key: 'company_name' },
         { title: 'Position', key: 'position' },
         { title: 'Salary Range', key: 'salary_range' },
+        { title: 'Offered', key: 'offered' },
         { title: 'Offer Date', key: 'offer_date' },
         { title: 'Status', key: 'status' },
         { title: 'Response Deadline', key: 'response_deadline' },
@@ -147,6 +153,7 @@ export default {
         company_name: '',
         position: '',
         salary_range: '',
+        offered: '',
         application: null,
         offer_date: '',
         start_date: '',
@@ -215,6 +222,7 @@ export default {
           company_name: '',
           position: '',
           salary_range: '',
+          offered: '',
           application: null,
           offer_date: '',
           start_date: '',

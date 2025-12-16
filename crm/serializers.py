@@ -76,11 +76,9 @@ class ApplicationSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
-        # If no stage provided, assign to first stage by default
-        if validated_data.get('stage') is None:
-            first_stage = Stage.objects.order_by('order').first()
-            if first_stage:
-                validated_data['stage'] = first_stage
+        first_stage = Stage.objects.order_by('order').first()
+        if first_stage:
+            validated_data['stage'] = first_stage
         
         return super().create(validated_data)
 
@@ -88,6 +86,10 @@ class ApplicationSerializer(serializers.ModelSerializer):
 class JobOfferSerializer(serializers.ModelSerializer):
     """Serializer for JobOffer model"""
     created_by_username = serializers.CharField(source='created_by.username', read_only=True)
+    # Make these fields optional in serializer (will be auto-populated from application)
+    company_name = serializers.CharField(required=False, allow_blank=True)
+    position = serializers.CharField(required=False, allow_blank=True)
+    salary_range = serializers.CharField(required=False, allow_blank=True)
 
     class Meta:
         model = JobOffer
@@ -95,21 +97,26 @@ class JobOfferSerializer(serializers.ModelSerializer):
         read_only_fields = ('created_by', 'created_at', 'updated_at')
     
     def validate(self, data):
-        """Validate that application is provided"""
-        if self.instance is None and not data.get('application'):
-            raise serializers.ValidationError({
-                'application': 'Application is required to create a job offer.'
-            })
+        """Validate that application is provided and auto-populate fields"""
+        if self.instance is None:
+            # On create, application is required
+            if not data.get('application'):
+                raise serializers.ValidationError({
+                    'application': 'Application is required to create a job offer.'
+                })
+            
+            # Auto-populate fields from application if not provided
+            application = data.get('application')
+            if application:
+                if not data.get('company_name'):
+                    data['company_name'] = application.company_name
+                if not data.get('position'):
+                    data['position'] = application.position or ''
+                if not data.get('salary_range'):
+                    data['salary_range'] = application.salary_range or ''
+        
         return data
     
     def create(self, validated_data):
-        """Auto-populate fields from application if not provided"""
-        application = validated_data.get('application')
-        if application:
-            if not validated_data.get('company_name'):
-                validated_data['company_name'] = application.company_name
-            if not validated_data.get('position'):
-                validated_data['position'] = application.position or ''
-            if not validated_data.get('salary_range'):
-                validated_data['salary_range'] = application.salary_range or ''
+        """Create JobOffer with auto-populated fields"""
         return super().create(validated_data)

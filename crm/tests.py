@@ -18,27 +18,47 @@ class JobOfferModelTests(TestCase):
     
     def test_can_create_job_offer(self):
         """Test that we can create a JobOffer with required fields"""
-        from .models import JobOffer
+        from .models import JobOffer, Application, Stage
         
-        job_offer = JobOffer.objects.create(
+        # Create required application
+        stage = Stage.objects.create(name="Applied", order=1)
+        application = Application.objects.create(
             company_name="Tech Corp",
             position="Software Engineer",
-            salary_range="100k-150k"
+            salary_range="100k-150k",
+            stage=stage,
+            created_by=self.user
         )
-        
-        self.assertEqual(job_offer.company_name, "Tech Corp")
-        self.assertEqual(job_offer.position, "Software Engineer")
-        self.assertEqual(job_offer.salary_range, "100k-150k")
-        self.assertIsNotNone(job_offer.id)
-    
-    def test_job_offer_with_created_by(self):
-        """Test creating JobOffer with created_by user"""
-        from .models import JobOffer
         
         job_offer = JobOffer.objects.create(
             company_name="Tech Corp",
             position="Software Engineer",
             salary_range="100k-150k",
+            application=application
+        )
+        
+        self.assertEqual(job_offer.company_name, "Tech Corp")
+        self.assertEqual(job_offer.position, "Software Engineer")
+        self.assertEqual(job_offer.salary_range, "100k-150k")
+        self.assertEqual(job_offer.application, application)
+        self.assertIsNotNone(job_offer.id)
+    
+    def test_job_offer_with_created_by(self):
+        """Test creating JobOffer with created_by user"""
+        from .models import JobOffer, Application, Stage
+        
+        stage = Stage.objects.create(name="Applied", order=1)
+        application = Application.objects.create(
+            company_name="Tech Corp",
+            stage=stage,
+            created_by=self.user
+        )
+        
+        job_offer = JobOffer.objects.create(
+            company_name="Tech Corp",
+            position="Software Engineer",
+            salary_range="100k-150k",
+            application=application,
             created_by=self.user
         )
         
@@ -47,12 +67,20 @@ class JobOfferModelTests(TestCase):
     
     def test_job_offer_without_created_by(self):
         """Test that created_by can be None (SET_NULL behavior)"""
-        from .models import JobOffer
+        from .models import JobOffer, Application, Stage
+        
+        stage = Stage.objects.create(name="Applied", order=1)
+        application = Application.objects.create(
+            company_name="Tech Corp",
+            stage=stage,
+            created_by=self.user
+        )
         
         job_offer = JobOffer.objects.create(
             company_name="Tech Corp",
             position="Software Engineer",
             salary_range="100k-150k",
+            application=application,
             created_by=None
         )
         
@@ -60,12 +88,20 @@ class JobOfferModelTests(TestCase):
     
     def test_job_offer_str_method(self):
         """Test the __str__ method returns correct format"""
-        from .models import JobOffer
+        from .models import JobOffer, Application, Stage
+        
+        stage = Stage.objects.create(name="Applied", order=1)
+        application = Application.objects.create(
+            company_name="Tech Corp",
+            stage=stage,
+            created_by=self.user
+        )
         
         job_offer = JobOffer.objects.create(
             company_name="Tech Corp",
             position="Software Engineer",
-            salary_range="100k-150k"
+            salary_range="100k-150k",
+            application=application
         )
         
         expected_str = "Software Engineer at Tech Corp"
@@ -73,13 +109,21 @@ class JobOfferModelTests(TestCase):
     
     def test_job_offer_auto_timestamps(self):
         """Test that created_at and updated_at are auto-generated"""
-        from .models import JobOffer
+        from .models import JobOffer, Application, Stage
         from django.utils import timezone
+        
+        stage = Stage.objects.create(name="Applied", order=1)
+        application = Application.objects.create(
+            company_name="Tech Corp",
+            stage=stage,
+            created_by=self.user
+        )
         
         job_offer = JobOffer.objects.create(
             company_name="Tech Corp",
             position="Software Engineer",
-            salary_range="100k-150k"
+            salary_range="100k-150k",
+            application=application
         )
         
         self.assertIsNotNone(job_offer.created_at)
@@ -89,13 +133,21 @@ class JobOfferModelTests(TestCase):
     
     def test_job_offer_updated_at_changes_on_save(self):
         """Test that updated_at changes when object is saved"""
-        from .models import JobOffer
+        from .models import JobOffer, Application, Stage
         import time
+        
+        stage = Stage.objects.create(name="Applied", order=1)
+        application = Application.objects.create(
+            company_name="Tech Corp",
+            stage=stage,
+            created_by=self.user
+        )
         
         job_offer = JobOffer.objects.create(
             company_name="Tech Corp",
             position="Software Engineer",
-            salary_range="100k-150k"
+            salary_range="100k-150k",
+            application=application
         )
         
         original_updated_at = job_offer.updated_at
@@ -108,20 +160,34 @@ class JobOfferModelTests(TestCase):
     
     def test_job_offer_ordering(self):
         """Test that JobOffers are ordered by -created_at (newest first)"""
-        from .models import JobOffer
+        from .models import JobOffer, Application, Stage
         import time
+        
+        stage = Stage.objects.create(name="Applied", order=1)
+        app1 = Application.objects.create(
+            company_name="Company A",
+            stage=stage,
+            created_by=self.user
+        )
+        app2 = Application.objects.create(
+            company_name="Company B",
+            stage=stage,
+            created_by=self.user
+        )
         
         job1 = JobOffer.objects.create(
             company_name="Company A",
             position="Position A",
-            salary_range="50k-70k"
+            salary_range="50k-70k",
+            application=app1
         )
         time.sleep(0.1)
         
         job2 = JobOffer.objects.create(
             company_name="Company B",
             position="Position B",
-            salary_range="80k-100k"
+            salary_range="80k-100k",
+            application=app2
         )
         
         all_offers = list(JobOffer.objects.all())
@@ -131,14 +197,22 @@ class JobOfferModelTests(TestCase):
     
     def test_job_offer_max_length_constraints(self):
         """Test that max_length constraints are enforced"""
-        from .models import JobOffer
+        from .models import JobOffer, Application, Stage
         from django.core.exceptions import ValidationError
+        
+        stage = Stage.objects.create(name="Applied", order=1)
+        application = Application.objects.create(
+            company_name="Test Company",
+            stage=stage,
+            created_by=self.user
+        )
         
         long_company_name = "A" * 201
         job_offer = JobOffer(
             company_name=long_company_name,
             position="Test Position",
-            salary_range="50k-70k"
+            salary_range="50k-70k",
+            application=application
         )
         
         with self.assertRaises(Exception):
@@ -148,7 +222,8 @@ class JobOfferModelTests(TestCase):
         job_offer = JobOffer(
             company_name="Test Company",
             position=long_position,
-            salary_range="50k-70k"
+            salary_range="50k-70k",
+            application=application
         )
         
         with self.assertRaises(Exception):
@@ -158,7 +233,8 @@ class JobOfferModelTests(TestCase):
         job_offer = JobOffer(
             company_name="Test Company",
             position="Test Position",
-            salary_range=long_salary_range
+            salary_range=long_salary_range,
+            application=application
         )
         
         with self.assertRaises(Exception):
@@ -166,18 +242,32 @@ class JobOfferModelTests(TestCase):
     
     def test_job_offer_user_relationship(self):
         """Test the reverse relationship from User to JobOffer"""
-        from .models import JobOffer
+        from .models import JobOffer, Application, Stage
+        
+        stage = Stage.objects.create(name="Applied", order=1)
+        app1 = Application.objects.create(
+            company_name="Company A",
+            stage=stage,
+            created_by=self.user
+        )
+        app2 = Application.objects.create(
+            company_name="Company B",
+            stage=stage,
+            created_by=self.user
+        )
         
         job1 = JobOffer.objects.create(
             company_name="Company A",
             position="Position A",
             salary_range="50k-70k",
+            application=app1,
             created_by=self.user
         )
         job2 = JobOffer.objects.create(
             company_name="Company B",
             position="Position B",
             salary_range="80k-100k",
+            application=app2,
             created_by=self.user
         )
         
@@ -188,12 +278,20 @@ class JobOfferModelTests(TestCase):
     
     def test_job_offer_user_set_null_on_delete(self):
         """Test that created_by is set to NULL when user is deleted"""
-        from .models import JobOffer
+        from .models import JobOffer, Application, Stage
+        
+        stage = Stage.objects.create(name="Applied", order=1)
+        application = Application.objects.create(
+            company_name="Tech Corp",
+            stage=stage,
+            created_by=self.user
+        )
         
         job_offer = JobOffer.objects.create(
             company_name="Tech Corp",
             position="Software Engineer",
             salary_range="100k-150k",
+            application=application,
             created_by=self.user
         )
         
@@ -238,16 +336,26 @@ class ApplicationCreationValidationTests(APITestCase):
         self.assertEqual(response.data['company_name'], 'Test Company')
     
     def test_application_auto_assigns_first_stage(self):
-        """Application should auto-assign to first stage if none provided"""
+        """Application should always auto-assign to first stage (lowest order)"""
         stage1 = Stage.objects.create(name="Applied", order=1)
         stage2 = Stage.objects.create(name="Interview", order=2)
         
+        # Test without stage provided
         response = self.client.post('/api/applications/', {
             'company_name': 'Test Company',
         })
         
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['stage'], stage1.id)
+        
+        # Test that even if a different stage is provided, it still goes to first stage
+        response = self.client.post('/api/applications/', {
+            'company_name': 'Test Company 2',
+            'stage': stage2.id
+        })
+        
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['stage'], stage1.id)  # Should still be first stage
     
     def test_can_create_application_with_position(self):
         """Test creating an application with position field"""
@@ -407,34 +515,54 @@ class JobOfferAPITests(APITestCase):
             password='testpass123'
         )
         self.client.force_authenticate(user=self.user)
+        # Create stage and application for JobOffer tests
+        from .models import Stage, Application
+        self.stage = Stage.objects.create(name="Applied", order=1)
+        self.application = Application.objects.create(
+            company_name='Tech Corp',
+            position='Software Engineer',
+            salary_range='100k-150k',
+            stage=self.stage,
+            created_by=self.user
+        )
     
     def test_can_create_job_offer(self):
         """Test creating a job offer via API"""
         response = self.client.post('/api/job-offers/', {
             'company_name': 'Tech Corp',
             'position': 'Software Engineer',
-            'salary_range': '100k-150k'
+            'salary_range': '100k-150k',
+            'application': self.application.id
         })
         
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['company_name'], 'Tech Corp')
         self.assertEqual(response.data['position'], 'Software Engineer')
         self.assertEqual(response.data['salary_range'], '100k-150k')
+        self.assertEqual(response.data['application'], self.application.id)
     
     def test_can_list_job_offers(self):
         """Test listing job offers via API"""
-        from .models import JobOffer
+        from .models import JobOffer, Application, Stage
+        
+        app2 = Application.objects.create(
+            company_name='Company B',
+            stage=self.stage,
+            created_by=self.user
+        )
         
         JobOffer.objects.create(
             company_name='Company A',
             position='Position A',
             salary_range='80k-100k',
+            application=self.application,
             created_by=self.user
         )
         JobOffer.objects.create(
             company_name='Company B',
             position='Position B',
             salary_range='120k-150k',
+            application=app2,
             created_by=self.user
         )
         
@@ -451,6 +579,7 @@ class JobOfferAPITests(APITestCase):
             company_name='Tech Corp',
             position='Software Engineer',
             salary_range='100k-150k',
+            application=self.application,
             created_by=self.user
         )
         
@@ -470,6 +599,7 @@ class JobOfferAPITests(APITestCase):
             company_name='Tech Corp',
             position='Software Engineer',
             salary_range='100k-150k',
+            application=self.application,
             created_by=self.user
         )
         
@@ -480,23 +610,31 @@ class JobOfferAPITests(APITestCase):
     
     def test_user_only_sees_own_job_offers(self):
         """Test that users only see job offers they created"""
-        from .models import JobOffer
+        from .models import JobOffer, Application
         
         other_user = User.objects.create_user(
             username='otheruser',
             password='testpass123'
         )
         
+        other_app = Application.objects.create(
+            company_name='Other Company',
+            stage=self.stage,
+            created_by=other_user
+        )
+        
         JobOffer.objects.create(
             company_name='My Company',
             position='My Position',
             salary_range='100k',
+            application=self.application,
             created_by=self.user
         )
         JobOffer.objects.create(
             company_name='Other Company',
             position='Other Position',
             salary_range='200k',
+            application=other_app,
             created_by=other_user
         )
         
@@ -505,3 +643,84 @@ class JobOfferAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data), 1)
         self.assertEqual(response.data[0]['company_name'], 'My Company')
+    
+    def test_job_offer_requires_application(self):
+        """Test that application field is required when creating JobOffer"""
+        response = self.client.post('/api/job-offers/', {
+            'company_name': 'Tech Corp',
+            'position': 'Software Engineer',
+            'salary_range': '100k-150k'
+        })
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('application', response.data)
+    
+    def test_job_offer_auto_populates_from_application(self):
+        """Test that JobOffer fields auto-populate from selected application"""
+        response = self.client.post('/api/job-offers/', {
+            'application': self.application.id
+        })
+        
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['company_name'], self.application.company_name)
+        self.assertEqual(response.data['position'], self.application.position)
+        self.assertEqual(response.data['salary_range'], self.application.salary_range)
+    
+    def test_job_offer_can_override_auto_populated_fields(self):
+        """Test that explicitly provided fields override auto-populated ones"""
+        response = self.client.post('/api/job-offers/', {
+            'application': self.application.id,
+            'company_name': 'Different Corp',
+            'position': 'Senior Engineer',
+            'salary_range': '150k-200k'
+        })
+        
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['company_name'], 'Different Corp')
+        self.assertEqual(response.data['position'], 'Senior Engineer')
+        self.assertEqual(response.data['salary_range'], '150k-200k')
+    
+    def test_job_offer_offered_field(self):
+        """Test that offered field can be set and retrieved"""
+        response = self.client.post('/api/job-offers/', {
+            'application': self.application.id,
+            'offered': '125k + equity'
+        })
+        
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['offered'], '125k + equity')
+        
+        # Test updating offered field
+        job_offer_id = response.data['id']
+        response = self.client.patch(f'/api/job-offers/{job_offer_id}/', {
+            'offered': '130k + equity + bonus'
+        })
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['offered'], '130k + equity + bonus')
+    
+    def test_job_offer_offered_field_is_optional(self):
+        """Test that offered field is optional"""
+        response = self.client.post('/api/job-offers/', {
+            'application': self.application.id
+        })
+        
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['offered'], '')
+    
+    def test_job_offer_cascade_delete_with_application(self):
+        """Test that JobOffer is deleted when application is deleted (CASCADE)"""
+        from .models import JobOffer
+        
+        job_offer = JobOffer.objects.create(
+            company_name='Tech Corp',
+            position='Software Engineer',
+            salary_range='100k-150k',
+            application=self.application,
+            created_by=self.user
+        )
+        
+        job_offer_id = job_offer.id
+        self.application.delete()
+        
+        self.assertFalse(JobOffer.objects.filter(id=job_offer_id).exists())
