@@ -14,7 +14,7 @@
         <v-list-item to="/customers" prepend-icon="mdi-account-group" title="Customers"></v-list-item>
         <v-list-item to="/contacts" prepend-icon="mdi-card-account-details" title="Contacts"></v-list-item>
         <v-list-item to="/interactions" prepend-icon="mdi-comment-text-multiple" title="Interactions"></v-list-item>
-        <v-list-item to="/leads" prepend-icon="mdi-trending-up" title="Leads"></v-list-item>
+        <v-list-item to="/applications" prepend-icon="mdi-briefcase" title="Applications"></v-list-item>
       </v-list>
     </v-navigation-drawer>
 

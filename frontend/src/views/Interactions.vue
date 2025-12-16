@@ -36,12 +36,18 @@
         <v-card-text>
           <v-form @submit.prevent="saveInteraction">
             <v-select
+              v-model="form.application"
+              :items="applications"
+              item-title="company_name"
+              item-value="id"
+              label="Application (Optional)"
+            ></v-select>
+            <v-select
               v-model="form.customer"
               :items="customers"
               item-title="name"
               item-value="id"
-              label="Customer"
-              required
+              label="Customer (Optional)"
             ></v-select>
             <v-select
               v-model="form.contact"
@@ -54,6 +60,12 @@
               v-model="form.interaction_type"
               :items="interactionTypes"
               label="Interaction Type"
+              required
+            ></v-select>
+            <v-select
+              v-model="form.direction"
+              :items="directionOptions"
+              label="Direction"
               required
             ></v-select>
             <v-text-field
@@ -101,24 +113,35 @@ export default {
       loading: false,
       dialog: false,
       editMode: false,
+      applications: [],
       interactionTypes: [
         { title: 'Email', value: 'email' },
         { title: 'Phone Call', value: 'phone' },
         { title: 'Meeting', value: 'meeting' },
+        { title: 'Interview', value: 'interview' },
+        { title: 'Follow-up', value: 'follow-up' },
         { title: 'Other', value: 'other' }
       ],
+      directionOptions: [
+        { title: 'Inbound', value: 'inbound' },
+        { title: 'Outbound', value: 'outbound' }
+      ],
       headers: [
+        { title: 'Application', key: 'application_company_name' },
         { title: 'Customer', key: 'customer_name' },
         { title: 'Contact', key: 'contact_name' },
         { title: 'Type', key: 'interaction_type' },
+        { title: 'Direction', key: 'direction' },
         { title: 'Subject', key: 'subject' },
         { title: 'Date', key: 'interaction_date' },
         { title: 'Actions', key: 'actions', sortable: false }
       ],
       form: {
+        application: null,
         customer: null,
         contact: null,
         interaction_type: '',
+        direction: 'outbound',
         subject: '',
         notes: '',
         interaction_date: ''
@@ -127,6 +150,7 @@ export default {
   },
   async mounted() {
     await this.loadInteractions()
+    await this.loadApplications()
     await this.loadCustomers()
     await this.loadContacts()
   },
@@ -161,6 +185,14 @@ export default {
         console.error('Error loading contacts:', error)
       }
     },
+    async loadApplications() {
+      try {
+        const response = await api.get('/applications/')
+        this.applications = response.data
+      } catch (error) {
+        console.error('Error loading applications:', error)
+      }
+    },
     openDialog(interaction = null) {
       if (interaction) {
         this.editMode = true
@@ -172,9 +204,11 @@ export default {
           .toISOString()
           .slice(0, 16)
         this.form = {
+          application: null,
           customer: null,
           contact: null,
           interaction_type: '',
+          direction: 'outbound',
           subject: '',
           notes: '',
           interaction_date: localDateTime

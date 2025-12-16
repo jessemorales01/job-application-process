@@ -5,7 +5,7 @@ import Dashboard from '../views/Dashboard.vue'
 import Customers from '../views/Customers.vue'
 import Contacts from '../views/Contacts.vue'
 import Interactions from '../views/Interactions.vue'
-import Leads from '../views/Leads.vue'
+import Applications from '../views/Applications.vue'
 
 const routes = [
   {
@@ -49,9 +49,9 @@ const routes = [
     meta: { requiresAuth: true }
   },
   {
-    path: '/leads',
-    name: 'Leads',
-    component: Leads,
+    path: '/applications',
+    name: 'Applications',
+    component: Applications,
     meta: { requiresAuth: true }
   }
 ]

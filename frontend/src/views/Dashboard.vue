@@ -58,11 +58,11 @@
           <v-col cols="12" md="3">
             <v-card>
               <v-card-title>
-                <v-icon left>mdi-trending-up</v-icon>
-                Leads
+                <v-icon left>mdi-briefcase</v-icon>
+                Applications
               </v-card-title>
               <v-card-text>
-                <div class="text-h4">{{ stats.leads }}</div>
+                <div class="text-h4">{{ stats.applications }}</div>
               </v-card-text>
             </v-card>
           </v-col>
@@ -83,7 +83,7 @@ export default {
         customers: 0,
         contacts: 0,
         interactions: 0,
-        leads: 0
+        applications: 0
       }
     }
   },
@@ -93,16 +93,16 @@ export default {
   methods: {
     async loadStats() {
       try {
-        const [customers, contacts, interactions, leads] = await Promise.all([
+        const [customers, contacts, interactions, applications] = await Promise.all([
           api.get('/customers/'),
           api.get('/contacts/'),
           api.get('/interactions/'),
-          api.get('/leads/')
+          api.get('/applications/')
         ])
         this.stats.customers = customers.data.length
         this.stats.contacts = contacts.data.length
         this.stats.interactions = interactions.data.length
-        this.stats.leads = leads.data.length
+        this.stats.applications = applications.data.length
       } catch (error) {
         console.error('Error loading stats:', error)
       }
