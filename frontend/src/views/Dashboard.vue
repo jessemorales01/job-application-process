@@ -18,7 +18,7 @@
 
     <v-main>
       <v-container>
-        <h1>Welcome to Job Process Tracker</h1>
+        <h1>Welcome to Job Application Tracker</h1>
         <v-row class="mt-5">
           <v-col cols="12" md="3">
             <v-card>
