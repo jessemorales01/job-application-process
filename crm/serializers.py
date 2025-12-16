@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import Contact, Interaction, Stage, Application, JobOffer, Assessment
+from .models import Interaction, Stage, Application, JobOffer, Assessment
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -22,19 +22,8 @@ class UserSerializer(serializers.ModelSerializer):
         return user
 
 
-class ContactSerializer(serializers.ModelSerializer):
-    """Serializer for Contact model"""
-    created_by_username = serializers.CharField(source='created_by.username', read_only=True)
-
-    class Meta:
-        model = Contact
-        fields = '__all__'
-        read_only_fields = ('created_by', 'created_at', 'updated_at')
-
-
 class InteractionSerializer(serializers.ModelSerializer):
     """Serializer for Interaction model"""
-    contact_name = serializers.SerializerMethodField()
     application_company_name = serializers.CharField(source='application.company_name', read_only=True)
     created_by_username = serializers.CharField(source='created_by.username', read_only=True)
 
@@ -42,11 +31,6 @@ class InteractionSerializer(serializers.ModelSerializer):
         model = Interaction
         fields = '__all__'
         read_only_fields = ('created_by', 'created_at', 'updated_at')
-
-    def get_contact_name(self, obj):
-        if obj.contact:
-            return f"{obj.contact.first_name} {obj.contact.last_name}"
-        return None
 
 
 class StageSerializer(serializers.ModelSerializer):

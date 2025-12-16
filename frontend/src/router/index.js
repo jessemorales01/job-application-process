@@ -3,9 +3,8 @@ import Login from '../views/Login.vue'
 import Signup from '../views/Signup.vue'
 import Dashboard from '../views/Dashboard.vue'
 import JobOffers from '../views/JobOffers.vue'
-import Contacts from '../views/Contacts.vue'
-import Interactions from '../views/Interactions.vue'
 import Applications from '../views/Applications.vue'
+import Activities from '../views/Activities.vue'
 
 const routes = [
   {
@@ -37,15 +36,9 @@ const routes = [
     meta: { requiresAuth: true }
   },
   {
-    path: '/contacts',
-    name: 'Contacts',
-    component: Contacts,
-    meta: { requiresAuth: true }
-  },
-  {
-    path: '/interactions',
-    name: 'Interactions',
-    component: Interactions,
+    path: '/activities',
+    name: 'Activities',
+    component: Activities,
     meta: { requiresAuth: true }
   },
   {

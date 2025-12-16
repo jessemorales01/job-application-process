@@ -42,13 +42,6 @@
               label="Application (Optional)"
             ></v-select>
             <v-select
-              v-model="form.contact"
-              :items="contacts"
-              item-title="full_name"
-              item-value="id"
-              label="Contact (Optional)"
-            ></v-select>
-            <v-select
               v-model="form.interaction_type"
               :items="interactionTypes"
               label="Interaction Type"
@@ -99,7 +92,6 @@ export default {
   data() {
     return {
       interactions: [],
-      contacts: [],
       loading: false,
       dialog: false,
       editMode: false,
@@ -118,7 +110,6 @@ export default {
       applications: [],
       headers: [
         { title: 'Application', key: 'application_company_name' },
-        { title: 'Contact', key: 'contact_name' },
         { title: 'Type', key: 'interaction_type' },
         { title: 'Subject', key: 'subject' },
         { title: 'Date', key: 'interaction_date' },
@@ -126,7 +117,6 @@ export default {
       ],
       form: {
         application: null,
-        contact: null,
         interaction_type: '',
         direction: 'outbound',
         subject: '',
@@ -138,7 +128,6 @@ export default {
   async mounted() {
     await this.loadInteractions()
     await this.loadApplications()
-    await this.loadContacts()
   },
   methods: {
     async loadInteractions() {
@@ -150,17 +139,6 @@ export default {
         console.error('Error loading interactions:', error)
       } finally {
         this.loading = false
-      }
-    },
-    async loadContacts() {
-      try {
-        const response = await api.get('/contacts/')
-        this.contacts = response.data.map(contact => ({
-          ...contact,
-          full_name: `${contact.first_name} ${contact.last_name}`
-        }))
-      } catch (error) {
-        console.error('Error loading contacts:', error)
       }
     },
     async loadApplications() {
@@ -183,7 +161,6 @@ export default {
           .slice(0, 16)
         this.form = {
           application: null,
-          contact: null,
           interaction_type: '',
           direction: 'outbound',
           subject: '',

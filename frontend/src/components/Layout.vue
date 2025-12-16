@@ -12,8 +12,7 @@
       <v-list>
         <v-list-item to="/dashboard" prepend-icon="mdi-view-dashboard" title="Dashboard"></v-list-item>
         <v-list-item to="/job-offers" prepend-icon="mdi-briefcase-check" title="Job Offers"></v-list-item>
-        <v-list-item to="/contacts" prepend-icon="mdi-card-account-details" title="Contacts"></v-list-item>
-        <v-list-item to="/interactions" prepend-icon="mdi-comment-text-multiple" title="Interactions"></v-list-item>
+        <v-list-item to="/activities" prepend-icon="mdi-clipboard-text-multiple" title="Activities"></v-list-item>
         <v-list-item to="/applications" prepend-icon="mdi-briefcase" title="Applications"></v-list-item>
       </v-list>
     </v-navigation-drawer>

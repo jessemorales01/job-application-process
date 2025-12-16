@@ -3,9 +3,9 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from django.contrib.auth.models import User
-from .models import Contact, Interaction, Stage, Application, JobOffer, Assessment
+from .models import Interaction, Stage, Application, JobOffer, Assessment
 from .serializers import (
-    UserSerializer, ContactSerializer,
+    UserSerializer,
     InteractionSerializer, StageSerializer, ApplicationSerializer, JobOfferSerializer, AssessmentSerializer
 )
 
@@ -19,21 +19,6 @@ def register(request):
         serializer.save()
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
-class ContactViewSet(viewsets.ModelViewSet):
-    """ViewSet for Contact CRUD operations"""
-    queryset = Contact.objects.all()
-    serializer_class = ContactSerializer
-
-    def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
-
-    def get_queryset(self):
-        # Users can only see contacts they created or all if staff
-        if self.request.user.is_staff:
-            return Contact.objects.all()
-        return Contact.objects.filter(created_by=self.request.user)
 
 
 class InteractionViewSet(viewsets.ModelViewSet):

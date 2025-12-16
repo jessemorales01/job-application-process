@@ -12,8 +12,6 @@
       <v-list>
         <v-list-item to="/dashboard" prepend-icon="mdi-view-dashboard" title="Dashboard"></v-list-item>
         <v-list-item to="/job-offers" prepend-icon="mdi-briefcase-check" title="Job Offers"></v-list-item>
-        <v-list-item to="/contacts" prepend-icon="mdi-card-account-details" title="Contacts"></v-list-item>
-        <v-list-item to="/interactions" prepend-icon="mdi-comment-text-multiple" title="Interactions"></v-list-item>
         <v-list-item to="/leads" prepend-icon="mdi-trending-up" title="Leads"></v-list-item>
       </v-list>
     </v-navigation-drawer>
@@ -36,22 +34,11 @@
           <v-col cols="12" md="3">
             <v-card>
               <v-card-title>
-                <v-icon left>mdi-card-account-details</v-icon>
-                Contacts
+                <v-icon left>mdi-clipboard-text-multiple</v-icon>
+                Activities
               </v-card-title>
               <v-card-text>
-                <div class="text-h4">{{ stats.contacts }}</div>
-              </v-card-text>
-            </v-card>
-          </v-col>
-          <v-col cols="12" md="3">
-            <v-card>
-              <v-card-title>
-                <v-icon left>mdi-comment-text-multiple</v-icon>
-                Interactions
-              </v-card-title>
-              <v-card-text>
-                <div class="text-h4">{{ stats.interactions }}</div>
+                <div class="text-h4">{{ stats.activities }}</div>
               </v-card-text>
             </v-card>
           </v-col>
@@ -81,8 +68,7 @@ export default {
     return {
       stats: {
         jobOffers: 0,
-        contacts: 0,
-        interactions: 0,
+        activities: 0,
         applications: 0
       }
     }
@@ -93,15 +79,14 @@ export default {
   methods: {
     async loadStats() {
       try {
-        const [jobOffers, contacts, interactions, applications] = await Promise.all([
+        const [jobOffers, assessments, interactions, applications] = await Promise.all([
           api.get('/job-offers/'),
-          api.get('/contacts/'),
+          api.get('/assessments/'),
           api.get('/interactions/'),
           api.get('/applications/')
         ])
         this.stats.jobOffers = jobOffers.data.length
-        this.stats.contacts = contacts.data.length
-        this.stats.interactions = interactions.data.length
+        this.stats.activities = assessments.data.length + interactions.data.length
         this.stats.applications = applications.data.length
       } catch (error) {
         console.error('Error loading stats:', error)

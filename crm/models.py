@@ -2,24 +2,6 @@ from django.db import models
 from django.contrib.auth.models import User
 
 
-class Contact(models.Model):
-    """Contact model to store contact persons"""
-    first_name = models.CharField(max_length=100)
-    last_name = models.CharField(max_length=100)
-    email = models.EmailField(unique=True)
-    phone = models.CharField(max_length=20, blank=True)
-    position = models.CharField(max_length=100, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='contacts')
-
-    def __str__(self):
-        return f"{self.first_name} {self.last_name}"
-
-    class Meta:
-        ordering = ['-created_at']
-
-
 class Interaction(models.Model):
     """Interaction model to track interactions with companies/jobs"""
     INTERACTION_TYPES = [
@@ -36,7 +18,6 @@ class Interaction(models.Model):
         ('outbound', 'Outbound'),
     ]
 
-    contact = models.ForeignKey(Contact, on_delete=models.SET_NULL, null=True, blank=True, related_name='interactions')
     application = models.ForeignKey('Application', on_delete=models.CASCADE, related_name='interactions', null=True, blank=True)
     interaction_type = models.CharField(max_length=20, choices=INTERACTION_TYPES)
     direction = models.CharField(max_length=10, choices=DIRECTION_CHOICES, default='outbound')
