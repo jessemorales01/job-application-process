@@ -28,6 +28,12 @@
               {{ getStatusLabel(item.status) }}
             </v-chip>
           </template>
+          <template v-slot:item.offer_date="{ item }">
+            {{ item.offer_date ? new Date(item.offer_date).toLocaleDateString() : '' }}
+          </template>
+          <template v-slot:item.response_deadline="{ item }">
+            {{ item.response_deadline ? new Date(item.response_deadline).toLocaleDateString() : '' }}
+          </template>
         </v-data-table>
       </v-card-text>
     </v-card>
@@ -54,8 +60,9 @@
               type="date"
             ></v-text-field>
             <v-text-field
-              v-model="form.salary_offered"
-              label="Salary Offered"
+              v-model="form.salary_range"
+              label="Salary Range"
+              required
               hint="e.g., '120k', '100k-130k'"
             ></v-text-field>
             <v-text-field
@@ -102,7 +109,6 @@ export default {
   data() {
     return {
       jobOffers: [],
-      applications: [],
       loading: false,
       dialog: false,
       editMode: false,
@@ -113,17 +119,21 @@ export default {
         { title: 'Negotiating', value: 'negotiating' }
       ],
       headers: [
-        { title: 'Application', key: 'application_company_name' },
+        { title: 'Company', key: 'company_name' },
+        { title: 'Position', key: 'position' },
+        { title: 'Salary Range', key: 'salary_range' },
         { title: 'Offer Date', key: 'offer_date' },
-        { title: 'Salary Offered', key: 'salary_offered' },
         { title: 'Status', key: 'status' },
         { title: 'Response Deadline', key: 'response_deadline' },
         { title: 'Actions', key: 'actions', sortable: false }
       ],
+      applications: [],
       form: {
+        company_name: '',
+        position: '',
+        salary_range: '',
         application: null,
         offer_date: '',
-        salary_offered: '',
         start_date: '',
         response_deadline: '',
         status: 'pending',
@@ -132,8 +142,10 @@ export default {
     }
   },
   async mounted() {
-    await this.loadJobOffers()
-    await this.loadApplications()
+    await Promise.all([
+      this.loadJobOffers(),
+      this.loadApplications()
+    ])
   },
   methods: {
     async loadJobOffers() {
@@ -159,12 +171,24 @@ export default {
       if (jobOffer) {
         this.editMode = true
         this.form = { ...jobOffer }
+        // Format dates for date inputs
+        if (this.form.offer_date) {
+          this.form.offer_date = this.form.offer_date.split('T')[0]
+        }
+        if (this.form.start_date) {
+          this.form.start_date = this.form.start_date.split('T')[0]
+        }
+        if (this.form.response_deadline) {
+          this.form.response_deadline = this.form.response_deadline.split('T')[0]
+        }
       } else {
         this.editMode = false
         this.form = {
+          company_name: '',
+          position: '',
+          salary_range: '',
           application: null,
           offer_date: '',
-          salary_offered: '',
           start_date: '',
           response_deadline: '',
           status: 'pending',

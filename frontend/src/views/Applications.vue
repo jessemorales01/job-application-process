@@ -76,7 +76,10 @@
               <template #item="{ element }">
                 <v-card class="kanban-card" @click="openDialog(element)">
                   <v-card-title class="d-flex align-center">
-                    <span class="application-name">{{ element.company_name }}</span>
+                    <div>
+                      <div class="font-weight-bold">{{ element.company_name }}</div>
+                      <div v-if="element.position" class="text-caption text-grey">{{ element.position }}</div>
+                    </div>
                     <v-spacer></v-spacer>
                     <v-menu offset-y>
                       <template v-slot:activator="{ props }">
@@ -128,6 +131,11 @@
               v-model="form.company_name"
               label="Company Name"
               required
+            ></v-text-field>
+            <v-text-field
+              v-model="form.position"
+              label="Position"
+              hint="e.g., Software Engineer, Senior Developer"
             ></v-text-field>
             <v-text-field
               v-model="form.email"
@@ -196,6 +204,7 @@ export default {
       editMode: false,
       form: {
         company_name: '',
+        position: '',
         email: '',
         phone_number: '',
         stack: '',

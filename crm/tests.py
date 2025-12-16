@@ -248,6 +248,46 @@ class ApplicationCreationValidationTests(APITestCase):
         
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['stage'], stage1.id)
+    
+    def test_can_create_application_with_position(self):
+        """Test creating an application with position field"""
+        Stage.objects.create(name="Applied", order=1)
+        
+        response = self.client.post('/api/applications/', {
+            'company_name': 'Test Company',
+            'position': 'Software Engineer',
+        })
+        
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['position'], 'Software Engineer')
+    
+    def test_application_position_is_optional(self):
+        """Test that position field is optional for applications"""
+        Stage.objects.create(name="Applied", order=1)
+        
+        response = self.client.post('/api/applications/', {
+            'company_name': 'Test Company',
+        })
+        
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['position'], '')
+    
+    def test_can_update_application_position(self):
+        """Test updating application position via API"""
+        Stage.objects.create(name="Applied", order=1)
+        
+        response = self.client.post('/api/applications/', {
+            'company_name': 'Test Company',
+            'position': 'Junior Developer',
+        })
+        application_id = response.data['id']
+        
+        response = self.client.patch(f'/api/applications/{application_id}/', {
+            'position': 'Senior Developer'
+        })
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['position'], 'Senior Developer')
 
 
 class StageDeletionTests(APITestCase):

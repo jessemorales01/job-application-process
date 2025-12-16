@@ -2,24 +2,6 @@ from django.db import models
 from django.contrib.auth.models import User
 
 
-class Customer(models.Model):
-    """Customer model to store customer information"""
-    name = models.CharField(max_length=200)
-    email = models.EmailField(unique=True)
-    phone = models.CharField(max_length=20, blank=True)
-    company = models.CharField(max_length=200, blank=True)
-    address = models.TextField(blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='customers')
-
-    def __str__(self):
-        return self.name
-
-    class Meta:
-        ordering = ['-created_at']
-
-
 class Contact(models.Model):
     """Contact model to store contact persons"""
     first_name = models.CharField(max_length=100)
@@ -27,7 +9,6 @@ class Contact(models.Model):
     email = models.EmailField(unique=True)
     phone = models.CharField(max_length=20, blank=True)
     position = models.CharField(max_length=100, blank=True)
-    customers = models.ManyToManyField(Customer, related_name='contacts', blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='contacts')
@@ -55,7 +36,6 @@ class Interaction(models.Model):
         ('outbound', 'Outbound'),
     ]
 
-    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name='interactions', null=True, blank=True)
     contact = models.ForeignKey(Contact, on_delete=models.SET_NULL, null=True, blank=True, related_name='interactions')
     application = models.ForeignKey('Application', on_delete=models.CASCADE, related_name='interactions', null=True, blank=True)
     interaction_type = models.CharField(max_length=20, choices=INTERACTION_TYPES)
@@ -70,8 +50,6 @@ class Interaction(models.Model):
     def __str__(self):
         if self.application:
             return f"{self.interaction_type} - {self.application.company_name} - {self.subject}"
-        elif self.customer:
-            return f"{self.interaction_type} - {self.customer.name} - {self.subject}"
         else:
             return f"{self.interaction_type} - {self.subject}"
 
@@ -120,9 +98,22 @@ class Application(models.Model):
 
 class JobOffer(models.Model):
     """JobOffer model to store job offer information"""
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('accepted', 'Accepted'),
+        ('rejected', 'Rejected'),
+        ('negotiating', 'Negotiating'),
+    ]
+    
     company_name = models.CharField(max_length=200)
     position = models.CharField(max_length=200)
     salary_range = models.CharField(max_length=100)
+    application = models.ForeignKey('Application', on_delete=models.SET_NULL, null=True, blank=True, related_name='job_offers')
+    offer_date = models.DateField(null=True, blank=True)
+    start_date = models.DateField(null=True, blank=True)
+    response_deadline = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='job_offers')
