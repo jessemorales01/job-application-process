@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import Contact, Interaction, Stage, Application, JobOffer
+from .models import Contact, Interaction, Stage, Application, JobOffer, Assessment
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -120,3 +120,15 @@ class JobOfferSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """Create JobOffer with auto-populated fields"""
         return super().create(validated_data)
+
+
+class AssessmentSerializer(serializers.ModelSerializer):
+    """Serializer for Assessment model"""
+    created_by_username = serializers.CharField(source='created_by.username', read_only=True)
+    application_company_name = serializers.CharField(source='application.company_name', read_only=True)
+    application_position = serializers.CharField(source='application.position', read_only=True)
+
+    class Meta:
+        model = Assessment
+        fields = '__all__'
+        read_only_fields = ('created_by', 'created_at', 'updated_at')

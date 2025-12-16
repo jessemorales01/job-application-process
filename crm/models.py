@@ -124,3 +124,31 @@ class JobOffer(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+
+
+class Assessment(models.Model):
+    """Assessment model to track assessments and take-home projects for job applications"""
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('in_progress', 'In Progress'),
+        ('submitted', 'Submitted'),
+        ('completed', 'Completed'),
+    ]
+    
+    application = models.ForeignKey('Application', on_delete=models.CASCADE, related_name='assessments')
+    deadline = models.DateField(help_text="Deadline for assessment/project submission")
+    website_url = models.URLField(blank=True, help_text="URL for assessment platform or project submission")
+    recruiter_contact_name = models.CharField(max_length=200, blank=True, help_text="Recruiter/contact name for submission")
+    recruiter_contact_email = models.EmailField(blank=True, help_text="Recruiter/contact email for submission")
+    recruiter_contact_phone = models.CharField(max_length=20, blank=True, help_text="Recruiter/contact phone for submission")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    notes = models.TextField(blank=True, help_text="Additional notes about the assessment")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='assessments')
+
+    def __str__(self):
+        return f"Assessment for {self.application.company_name} - {self.application.position}"
+
+    class Meta:
+        ordering = ['deadline']  # Order by deadline (earliest first)

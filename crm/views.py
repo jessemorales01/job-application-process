@@ -3,10 +3,10 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from django.contrib.auth.models import User
-from .models import Contact, Interaction, Stage, Application, JobOffer
+from .models import Contact, Interaction, Stage, Application, JobOffer, Assessment
 from .serializers import (
     UserSerializer, ContactSerializer,
-    InteractionSerializer, StageSerializer, ApplicationSerializer, JobOfferSerializer
+    InteractionSerializer, StageSerializer, ApplicationSerializer, JobOfferSerializer, AssessmentSerializer
 )
 
 
@@ -95,6 +95,21 @@ class JobOfferViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = JobOffer.objects.select_related('created_by')
+        if self.request.user.is_staff:
+            return qs.all()
+        return qs.filter(created_by=self.request.user)
+
+
+class AssessmentViewSet(viewsets.ModelViewSet):
+    """ViewSet for Assessment CRUD operations"""
+    queryset = Assessment.objects.select_related('created_by', 'application').all()
+    serializer_class = AssessmentSerializer
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+    def get_queryset(self):
+        qs = Assessment.objects.select_related('created_by', 'application')
         if self.request.user.is_staff:
             return qs.all()
         return qs.filter(created_by=self.request.user)
