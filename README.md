@@ -1,22 +1,61 @@
-# CRM App - Technical Assessment
+# Job Process Tracker
 
-You've joined a team building a CRM system for managing leads and customer deals. The basic application exists, but your product manager has identified several opportunities to make it more valuable for enrollment teams.
+A full-stack web application for managing your job application process, from initial applications through job offers and assessments. Built with Django REST Framework and Vue 3.
 
-Your task: **Extend this application in ways that demonstrate your strongest technical skills.**
+## Overview
 
-This is intentionally vague and open-ended. Pick the direction that best showcases your abilities.
+Job Process Tracker helps you organize and track your job search process. Manage applications through a Kanban board, track job offers, record assessments and take-home projects, and log interactions with recruiters—all in one place.
 
-## What's Already Built
+## Features
 
-A functional full-stack application with:
+### Core Functionality
 
-- **Backend**: Django REST Framework with JWT authentication
-- **Frontend**: Vue 3 with Vuetify
-- **Core Features**: Basic CRUD operations for customers (institutions), contacts (prospects), interactions, and leads
-- **Data Model**: Simple relationships between entities
-- **Authentication**: User registration and login
+- **Job Applications Management**
+  - Kanban board with customizable pipeline stages
+  - Drag-and-drop to move applications between stages
+  - Auto-assignment to the first stage when creating new applications
+  - Track company name, position, tech stack, and salary range
 
-The application works, but enrollment teams need more sophisticated features to be effective. Think of this as an MVP you're building upon.
+- **Job Offers**
+  - Track job offers linked to applications
+  - Auto-populate company details from the associated application
+  - Record offer dates, response deadlines, status, and compensation details
+  - Store the actual salary/compensation offered
+
+- **Assessments & Activities**
+  - Unified Activities view combining Assessments and Interactions
+  - Track take-home projects and assessments with deadlines
+  - Store recruiter contact information for submissions
+  - Filter activities by job application
+  - Sort by date (most recent first)
+
+- **Interactions**
+  - Log interactions with companies (emails, phone calls, meetings, interviews)
+  - Track interaction type, direction (inbound/outbound), and notes
+  - Link interactions to specific applications
+
+### Technical Features
+
+- **User Authentication**: JWT-based authentication with user registration
+- **User Scoping**: Users can only see their own data (staff can see all)
+- **RESTful API**: Clean Django REST Framework API
+- **Responsive UI**: Modern Vue 3 + Vuetify interface
+- **Test Coverage**: Comprehensive backend tests (50+ tests) and frontend component tests
+
+## Tech Stack
+
+### Backend
+- **Django 5.2.8** - Web framework
+- **Django REST Framework** - API framework
+- **SQLite** - Database (default, easily switchable to PostgreSQL)
+- **JWT Authentication** - Secure token-based auth
+
+### Frontend
+- **Vue 3** - Progressive JavaScript framework
+- **Vuetify 3** - Material Design component framework
+- **Vue Router** - Client-side routing
+- **Axios** - HTTP client for API calls
+- **Vitest** - Fast unit test framework
 
 ## Getting Started
 
@@ -24,83 +63,147 @@ The application works, but enrollment teams need more sophisticated features to 
 
 - Python 3.8+
 - Node.js 16+
+- pip (Python package manager)
+- npm or yarn
 
-### Setup
+### Installation
 
-**Backend:**
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/jessemorales01/job-application-process.git
+   cd job-application-process
+   ```
 
-```bash
-# Install dependencies
-pip install -r requirements.txt
+2. **Backend Setup**
+   ```bash
+   # Install Python dependencies
+   pip install -r requirements.txt
 
-# Run migrations
-python manage.py migrate
+   # Run database migrations
+   python manage.py migrate
 
-# Start server (runs on http://127.0.0.1:8000)
-python manage.py runserver
+   # Create a superuser (optional, for admin access)
+   python manage.py createsuperuser
+
+   # Start the development server
+   python manage.py runserver
+   ```
+   The backend will run on `http://127.0.0.1:8000`
+
+3. **Frontend Setup**
+   ```bash
+   cd frontend
+
+   # Install Node.js dependencies
+   npm install
+
+   # Start the development server
+   npm run dev
+   ```
+   The frontend will run on `http://localhost:5173`
+
+### First Steps
+
+1. Open `http://localhost:5173` in your browser
+2. Create an account through the signup page
+3. Log in with your credentials
+4. Start by creating your first job application!
+
+## Project Structure
+
+```
+job-application-process/
+├── crm/                    # Django app (backend)
+│   ├── models.py          # Database models (Application, JobOffer, Assessment, Interaction, Stage)
+│   ├── views.py            # API ViewSets
+│   ├── serializers.py      # DRF serializers
+│   ├── urls.py             # API routes
+│   ├── admin.py            # Django admin configuration
+│   ├── tests.py            # Backend tests
+│   └── migrations/         # Database migrations
+├── frontend/               # Vue.js frontend
+│   ├── src/
+│   │   ├── views/          # Page components (Applications, JobOffers, Activities, Dashboard)
+│   │   ├── components/     # Reusable components (Layout)
+│   │   ├── router/         # Vue Router configuration
+│   │   └── services/       # API service layer
+│   └── package.json
+├── crm_project/            # Django project settings
+├── requirements.txt        # Python dependencies
+└── README.md              # This file
 ```
 
-**Frontend:**
+## API Endpoints
 
+All API endpoints are prefixed with `/api/` and require authentication (JWT token).
+
+- `POST /api/register/` - User registration
+- `POST /api/token/` - Get JWT token (login)
+- `GET /api/applications/` - List applications
+- `POST /api/applications/` - Create application
+- `GET /api/job-offers/` - List job offers
+- `POST /api/job-offers/` - Create job offer
+- `GET /api/assessments/` - List assessments
+- `POST /api/assessments/` - Create assessment
+- `GET /api/interactions/` - List interactions
+- `POST /api/interactions/` - Create interaction
+- `GET /api/stages/` - List pipeline stages
+- `POST /api/stages/` - Create stage
+
+## Testing
+
+### Backend Tests
+```bash
+# Run all backend tests
+python manage.py test crm
+
+# Run specific test class
+python manage.py test crm.tests.ApplicationAPITests
+
+# Run with verbose output
+python manage.py test crm -v 2
+```
+
+### Frontend Tests
 ```bash
 cd frontend
-npm install
-npm run dev  # Runs on http://localhost:5173
+npm test
+
+# Run specific test file
+npm test -- Activities.test.js
 ```
 
-Create an account through the UI or use Django admin after creating a superuser with `python manage.py createsuperuser`.
+## Development
 
-## Project Requirements
+### Database Migrations
 
-We want you to implement a Kanban board for managing the deals at different stages
+When you modify models, create and apply migrations:
 
-- You should be able to add or remove pipeline stages
-- You should be able to move the deals between stages in the UI
-- The initial stage of the deal is based on dollar amount
+```bash
+# Create migration
+python manage.py makemigrations crm
 
-**Required:**
+# Apply migrations
+python manage.py migrate
+```
 
-1. Document your changes in a `SOLUTION.md` file:
+### Code Style
 
-   - What you built and why
-   - Technical decisions and tradeoffs
-   - How to test your features
-   - Any new dependencies or setup steps (or add to the instructions above)
+- **Backend**: Follow PEP 8 Python style guide
+- **Frontend**: Follow Vue.js style guide and ESLint rules
 
-2. Ensure your code is clean, well-organized, and demonstrates your best practices
+## Key Models
 
-**Bonus Points:**
+- **Application**: Job applications with company, position, stack, salary range, and stage
+- **JobOffer**: Job offers linked to applications with offer details and deadlines
+- **Assessment**: Take-home projects and assessments with deadlines and recruiter contact info
+- **Interaction**: Logged interactions (emails, calls, meetings) with companies
+- **Stage**: Pipeline stages for organizing applications in the Kanban board
 
-- If you implemented ML/AI features, explain your approach and model choices
-- Thoughtful commit history
+## License
 
-We're excited to see what you build!
+This project is private and proprietary.
 
-## Submission Instructions
+## Support
 
-1. **Request Repository Access:**
-
-   - Email us at [lucas@smartpandatools.com] to request access to the private repository
-   - We'll add you as a collaborator so you can clone the project
-
-2. **Create Your Private Fork:**
-
-   - Create a new **private** repository in your GitHub account (e.g., `your-username/repo-name`)
-   - Clone our repository locally
-   - Push the code to your private repository
-
-3. **Build Your Solution:**
-
-   - Work on your implementation in your private repository
-   - Commit regularly with clear, descriptive commit messages
-
-4. **Submit Your Work:**
-   - Add **`iwalucas`, `mikinty`** as collaborators to your private repository (Settings → Collaborators)
-   - Email us at `lucas@smartpandatools.com`, `michael@smartpandatools.com` with:
-     - Link to your private repository
-     - Any special instructions for running your solution
-   - Ensure your `SOLUTION.md` is complete and included in the repository
-
-**Timeline:** Please submit by Dec 9th
-
-**Questions?** Feel free to reach out at `lucas@smartpandatools.com` or `michael@smartpandatools.com` if you encounter any setup issues.
+For questions or issues, please contact the repository maintainer.
