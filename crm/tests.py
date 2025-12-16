@@ -724,3 +724,166 @@ class JobOfferAPITests(APITestCase):
         self.application.delete()
         
         self.assertFalse(JobOffer.objects.filter(id=job_offer_id).exists())
+
+
+class AssessmentModelTests(TestCase):
+    """Test the Assessment model"""
+    
+    def setUp(self):
+        """Set up test user, stage, and application for Assessment tests"""
+        self.user = User.objects.create_user(
+            username='testuser',
+            password='testpass123'
+        )
+        self.stage = Stage.objects.create(name="Applied", order=1)
+        self.application = Application.objects.create(
+            company_name="Tech Corp",
+            position="Software Engineer",
+            stack="Python, Django, React",
+            salary_range="100k-150k",
+            stage=self.stage,
+            created_by=self.user
+        )
+    
+    def test_can_create_assessment_with_required_fields(self):
+        """Test that we can create an Assessment with required fields"""
+        from .models import Assessment
+        from datetime import date, timedelta
+        
+        deadline = date.today() + timedelta(days=7)
+        assessment = Assessment.objects.create(
+            application=self.application,
+            deadline=deadline
+        )
+        
+        self.assertEqual(assessment.application, self.application)
+        self.assertEqual(assessment.deadline, deadline)
+        self.assertIsNotNone(assessment.id)
+    
+    def test_assessment_requires_application(self):
+        """Test that Assessment requires an application"""
+        from .models import Assessment
+        from datetime import date, timedelta
+        
+        deadline = date.today() + timedelta(days=7)
+        
+        with self.assertRaises(Exception):
+            Assessment.objects.create(deadline=deadline)
+    
+    def test_assessment_requires_deadline(self):
+        """Test that Assessment requires a deadline"""
+        from .models import Assessment
+        
+        with self.assertRaises(Exception):
+            Assessment.objects.create(application=self.application)
+    
+    def test_assessment_can_have_optional_fields(self):
+        """Test that Assessment can have optional fields"""
+        from .models import Assessment
+        from datetime import date, timedelta
+        
+        deadline = date.today() + timedelta(days=7)
+        assessment = Assessment.objects.create(
+            application=self.application,
+            deadline=deadline,
+            website_url="https://assessment.example.com",
+            recruiter_contact_name="John Doe",
+            recruiter_contact_email="john@example.com",
+            recruiter_contact_phone="555-1234",
+            notes="Take-home project for backend position"
+        )
+        
+        self.assertEqual(assessment.website_url, "https://assessment.example.com")
+        self.assertEqual(assessment.recruiter_contact_name, "John Doe")
+        self.assertEqual(assessment.recruiter_contact_email, "john@example.com")
+        self.assertEqual(assessment.recruiter_contact_phone, "555-1234")
+        self.assertEqual(assessment.notes, "Take-home project for backend position")
+    
+    def test_assessment_has_status_field(self):
+        """Test that Assessment has a status field with default"""
+        from .models import Assessment
+        from datetime import date, timedelta
+        
+        deadline = date.today() + timedelta(days=7)
+        assessment = Assessment.objects.create(
+            application=self.application,
+            deadline=deadline
+        )
+        
+        self.assertEqual(assessment.status, 'pending')
+    
+    def test_assessment_cascade_delete_with_application(self):
+        """Test that Assessment is deleted when application is deleted (CASCADE)"""
+        from .models import Assessment
+        from datetime import date, timedelta
+        
+        deadline = date.today() + timedelta(days=7)
+        assessment = Assessment.objects.create(
+            application=self.application,
+            deadline=deadline
+        )
+        
+        assessment_id = assessment.id
+        self.application.delete()
+        
+        self.assertFalse(Assessment.objects.filter(id=assessment_id).exists())
+    
+    def test_assessment_has_auto_timestamps(self):
+        """Test that Assessment has auto-generated timestamps"""
+        from .models import Assessment
+        from datetime import date, timedelta
+        from django.utils import timezone
+        
+        deadline = date.today() + timedelta(days=7)
+        assessment = Assessment.objects.create(
+            application=self.application,
+            deadline=deadline
+        )
+        
+        self.assertIsNotNone(assessment.created_at)
+        self.assertIsNotNone(assessment.updated_at)
+        self.assertLessEqual(assessment.created_at, timezone.now())
+        self.assertLessEqual(assessment.updated_at, timezone.now())
+    
+    def test_assessment_str_method(self):
+        """Test the __str__ method returns correct format"""
+        from .models import Assessment
+        from datetime import date, timedelta
+        
+        deadline = date.today() + timedelta(days=7)
+        assessment = Assessment.objects.create(
+            application=self.application,
+            deadline=deadline
+        )
+        
+        expected_str = f"Assessment for {self.application.company_name} - {self.application.position}"
+        self.assertEqual(str(assessment), expected_str)
+    
+    def test_assessment_ordering(self):
+        """Test that Assessments are ordered by deadline (earliest first)"""
+        from .models import Assessment
+        from datetime import date, timedelta
+        
+        deadline1 = date.today() + timedelta(days=7)
+        deadline2 = date.today() + timedelta(days=14)
+        
+        app2 = Application.objects.create(
+            company_name="Another Corp",
+            stage=self.stage,
+            created_by=self.user
+        )
+        
+        assessment1 = Assessment.objects.create(
+            application=app2,
+            deadline=deadline2
+        )
+        assessment2 = Assessment.objects.create(
+            application=self.application,
+            deadline=deadline1
+        )
+        
+        all_assessments = list(Assessment.objects.all())
+        
+        # Should be ordered by deadline (earliest first)
+        self.assertEqual(all_assessments[0], assessment2)
+        self.assertEqual(all_assessments[1], assessment1)
