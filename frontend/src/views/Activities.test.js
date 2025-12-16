@@ -500,30 +500,41 @@ describe('Activities.vue', () => {
   })
 
   it('sorts activities by date (most recent first)', async () => {
+    // Override API mocks for this specific test
+    const testAssessments = [
+      {
+        id: 1,
+        application: 1,
+        application_company_name: 'Tech Corp',
+        deadline: '2024-12-25',
+        status: 'pending'
+      }
+    ]
+    const testInteractions = [
+      {
+        id: 1,
+        application: 1,
+        application_company_name: 'Tech Corp',
+        interaction_date: '2024-12-20T10:00:00Z',
+        interaction_type: 'email',
+        subject: 'Test interaction'
+      }
+    ]
+
+    api.get = vi.fn((url) => {
+      if (url === '/assessments/') {
+        return Promise.resolve({ data: testAssessments })
+      }
+      if (url === '/interactions/') {
+        return Promise.resolve({ data: testInteractions })
+      }
+      if (url === '/applications/') {
+        return Promise.resolve({ data: mockApplications })
+      }
+      return Promise.reject(new Error('Unknown URL'))
+    })
+
     wrapper = mount(Activities, {
-      data() {
-        return {
-          assessments: [
-            {
-              id: 1,
-              application: 1,
-              application_company_name: 'Tech Corp',
-              deadline: '2024-12-25'
-            }
-          ],
-          interactions: [
-            {
-              id: 1,
-              application: 1,
-              application_company_name: 'Tech Corp',
-              interaction_date: '2024-12-20T10:00:00Z'
-            }
-          ],
-          applications: mockApplications,
-          loading: false,
-          selectedApplication: null
-        }
-      },
       global: {
         stubs: {
           Layout: true,
@@ -539,6 +550,20 @@ describe('Activities.vue', () => {
       }
     })
 
+    // Wait for component to mount and all async data loading to complete
+    await wrapper.vm.$nextTick()
+    // Wait for the Promise.all in mounted() to complete
+    await new Promise(resolve => {
+      // Check if data has been loaded
+      const checkData = () => {
+        if (wrapper.vm.assessments.length > 0 || wrapper.vm.interactions.length > 0) {
+          resolve()
+        } else {
+          setTimeout(checkData, 10)
+        }
+      }
+      checkData()
+    })
     await wrapper.vm.$nextTick()
 
     const activities = wrapper.vm.filteredActivities
@@ -549,7 +574,7 @@ describe('Activities.vue', () => {
     const dateA = new Date(activities[0].deadline || activities[0].interaction_date)
     const dateB = new Date(activities[1].deadline || activities[1].interaction_date)
     
-    // Most recent date should be first
+    // Most recent date should be first (2024-12-25 > 2024-12-20)
     expect(dateA.getTime()).toBeGreaterThanOrEqual(dateB.getTime())
     
     // Verify the actual items
@@ -561,8 +586,11 @@ describe('Activities.vue', () => {
     expect(assessment.deadline).toBe('2024-12-25')
     expect(interaction.interaction_date).toBe('2024-12-20T10:00:00Z')
     
-    // Most recent (2024-12-25) should be first
-    expect(activities[0].deadline || activities[0].interaction_date).toBeTruthy()
+    // Most recent (2024-12-25 Assessment) should be first
+    expect(activities[0].type).toBe('Assessment')
+    expect(activities[0].deadline).toBe('2024-12-25')
+    expect(activities[1].type).toBe('Interaction')
+    expect(activities[1].interaction_date).toBe('2024-12-20T10:00:00Z')
   })
 })
 
