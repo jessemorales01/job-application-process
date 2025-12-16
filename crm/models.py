@@ -108,7 +108,7 @@ class JobOffer(models.Model):
     company_name = models.CharField(max_length=200)
     position = models.CharField(max_length=200)
     salary_range = models.CharField(max_length=100)
-    application = models.ForeignKey('Application', on_delete=models.SET_NULL, null=True, blank=True, related_name='job_offers')
+    application = models.ForeignKey('Application', on_delete=models.CASCADE, related_name='job_offers')
     offer_date = models.DateField(null=True, blank=True)
     start_date = models.DateField(null=True, blank=True)
     response_deadline = models.DateField(null=True, blank=True)

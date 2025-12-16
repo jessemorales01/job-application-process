@@ -49,21 +49,36 @@
             <v-select
               v-model="form.application"
               :items="applications"
-              item-title="company_name"
+              item-title="title"
               item-value="id"
               label="Application"
               required
+              @update:model-value="onApplicationSelected"
             ></v-select>
             <v-text-field
-              v-model="form.offer_date"
-              label="Offer Date"
-              type="date"
+              v-model="form.company_name"
+              label="Company Name"
+              required
+              :readonly="!!form.application"
+            ></v-text-field>
+            <v-text-field
+              v-model="form.position"
+              label="Position"
+              required
+              hint="e.g., Software Engineer, Senior Developer"
+              :readonly="!!form.application"
             ></v-text-field>
             <v-text-field
               v-model="form.salary_range"
               label="Salary Range"
               required
               hint="e.g., '120k', '100k-130k'"
+              :readonly="!!form.application"
+            ></v-text-field>
+            <v-text-field
+              v-model="form.offer_date"
+              label="Offer Date"
+              type="date"
             ></v-text-field>
             <v-text-field
               v-model="form.start_date"
@@ -162,9 +177,22 @@ export default {
     async loadApplications() {
       try {
         const response = await api.get('/applications/')
-        this.applications = response.data
+        this.applications = response.data.map(app => ({
+          ...app,
+          title: `${app.company_name}${app.position ? ` - ${app.position}` : ''}`
+        }))
       } catch (error) {
         console.error('Error loading applications:', error)
+      }
+    },
+    onApplicationSelected(applicationId) {
+      if (applicationId && !this.editMode) {
+        const selectedApp = this.applications.find(app => app.id === applicationId)
+        if (selectedApp) {
+          this.form.company_name = selectedApp.company_name || ''
+          this.form.position = selectedApp.position || ''
+          this.form.salary_range = selectedApp.salary_range || ''
+        }
       }
     },
     openDialog(jobOffer = null) {
