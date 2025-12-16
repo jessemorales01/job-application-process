@@ -420,16 +420,31 @@ export default {
     },
     async saveAssessment() {
       try {
+        // Normalize website_url - add https:// if missing
+        const formData = { ...this.assessmentForm }
+        if (formData.website_url && formData.website_url.trim() && !formData.website_url.match(/^https?:\/\//)) {
+          formData.website_url = 'https://' + formData.website_url.trim()
+        }
+        
         if (this.assessmentEditMode) {
-          await api.put(`/assessments/${this.assessmentForm.id}/`, this.assessmentForm)
+          await api.put(`/assessments/${formData.id}/`, formData)
         } else {
-          await api.post('/assessments/', this.assessmentForm)
+          await api.post('/assessments/', formData)
         }
         this.assessmentDialog = false
         await this.loadAssessments()
       } catch (error) {
         console.error('Error saving assessment:', error)
-        alert('Failed to save assessment. Please try again.')
+        // Log the full error response for debugging
+        if (error.response && error.response.data) {
+          console.error('Validation errors:', error.response.data)
+          const errorMsg = error.response.data.detail || 
+            (typeof error.response.data === 'object' ? JSON.stringify(error.response.data) : error.response.data) ||
+            'Failed to save assessment. Please check the form fields.'
+          alert(errorMsg)
+        } else {
+          alert('Failed to save assessment. Please try again.')
+        }
       }
     },
     async saveInteraction() {
