@@ -500,7 +500,7 @@ describe('Activities.vue', () => {
   })
 
   it('sorts activities by date (most recent first)', async () => {
-    // Override API mocks for this specific test
+    // Override API mocks for this specific test BEFORE mounting
     const testAssessments = [
       {
         id: 1,
@@ -521,6 +521,7 @@ describe('Activities.vue', () => {
       }
     ]
 
+    // Override the API mock before mounting
     api.get = vi.fn((url) => {
       if (url === '/assessments/') {
         return Promise.resolve({ data: testAssessments })
@@ -552,18 +553,14 @@ describe('Activities.vue', () => {
 
     // Wait for component to mount and all async data loading to complete
     await wrapper.vm.$nextTick()
-    // Wait for the Promise.all in mounted() to complete
-    await new Promise(resolve => {
-      // Check if data has been loaded
-      const checkData = () => {
-        if (wrapper.vm.assessments.length > 0 || wrapper.vm.interactions.length > 0) {
-          resolve()
-        } else {
-          setTimeout(checkData, 10)
-        }
-      }
-      checkData()
-    })
+    
+    // Wait for the Promise.all in mounted() to complete by waiting for the actual API calls
+    await Promise.all([
+      wrapper.vm.loadAssessments(),
+      wrapper.vm.loadInteractions(),
+      wrapper.vm.loadApplications()
+    ])
+    
     await wrapper.vm.$nextTick()
 
     const activities = wrapper.vm.filteredActivities
