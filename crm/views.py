@@ -3,10 +3,10 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from django.contrib.auth.models import User
-from .models import Customer, Contact, Interaction, Stage, Lead
+from .models import Customer, Contact, Interaction, Stage, Application
 from .serializers import (
     UserSerializer, CustomerSerializer, ContactSerializer,
-    InteractionSerializer, StageSerializer, LeadSerializer
+    InteractionSerializer, StageSerializer, ApplicationSerializer
 )
 
 
@@ -72,29 +72,29 @@ class StageViewSet(viewsets.ModelViewSet):
     serializer_class = StageSerializer
 
     def destroy(self, request, *args, **kwargs):
-        """Prevent deletion if stage has leads"""
+        """Prevent deletion if stage has applications"""
         stage = self.get_object()
-        lead_count = stage.leads.count()
+        application_count = stage.applications.count()
         
-        if lead_count > 0:
+        if application_count > 0:
             return Response(
-                {"error": f"Cannot delete stage with {lead_count} lead(s). Move them to another stage first."},
+                {"error": f"Cannot delete stage with {application_count} application(s). Move them to another stage first."},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
         return super().destroy(request, *args, **kwargs)
 
 
-class LeadViewSet(viewsets.ModelViewSet):
-    """ViewSet for Lead CRUD operations"""
-    queryset = Lead.objects.select_related('stage', 'created_by').all()
-    serializer_class = LeadSerializer
+class ApplicationViewSet(viewsets.ModelViewSet):
+    """ViewSet for Application CRUD operations"""
+    queryset = Application.objects.select_related('stage', 'created_by').all()
+    serializer_class = ApplicationSerializer
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
 
     def get_queryset(self):
-        qs = Lead.objects.select_related('stage', 'created_by')
+        qs = Application.objects.select_related('stage', 'created_by')
         if self.request.user.is_staff:
             return qs.all()
         return qs.filter(created_by=self.request.user)

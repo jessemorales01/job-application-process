@@ -1,9 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import Customer, Contact, Interaction, Stage, Lead
-
-STAGE_THRESHOLD_LOW = 1000
-STAGE_THRESHOLD_MEDIUM = 10000
+from .models import Customer, Contact, Interaction, Stage, Application
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -56,6 +53,7 @@ class InteractionSerializer(serializers.ModelSerializer):
     """Serializer for Interaction model"""
     customer_name = serializers.CharField(source='customer.name', read_only=True)
     contact_name = serializers.SerializerMethodField()
+    application_company_name = serializers.CharField(source='application.company_name', read_only=True)
     created_by_username = serializers.CharField(source='created_by.username', read_only=True)
 
     class Meta:
@@ -77,70 +75,29 @@ class StageSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
-class LeadSerializer(serializers.ModelSerializer):
-    """Serializer for Lead model"""
+class ApplicationSerializer(serializers.ModelSerializer):
+    """Serializer for Application model"""
     created_by_username = serializers.CharField(source='created_by.username', read_only=True)
     stage_name = serializers.CharField(source='stage.name', read_only=True)
 
-    WIN_SCORE_FIELDS = {'estimated_value', 'status', 'phone', 'company'}
-
     class Meta:
-        model = Lead
+        model = Application
         fields = '__all__'
-        read_only_fields = ('created_by', 'created_at', 'updated_at', 'win_score')
-
-    def _calculate_win_score(self, instance):
-        """Calculate and cache win_score for a lead"""
-        from .ml_service import predict_win_score
-        return predict_win_score(instance)
+        read_only_fields = ('created_by', 'created_at', 'updated_at')
 
     def validate(self, data):
-        """Ensure at least one stage exists before creating a lead"""
+        """Ensure at least one stage exists before creating an application"""
         if self.instance is None and not Stage.objects.exists():
             raise serializers.ValidationError(
-                "Cannot create lead: no stages exist. Please create a stage first."
+                "Cannot create application: no stages exist. Please create a stage first."
             )
         return data
 
     def create(self, validated_data):
+        # If no stage provided, assign to first stage by default
         if validated_data.get('stage') is None:
-            estimated_value = validated_data.get('estimated_value') or 0
-            validated_data['stage'] = self.get_stage_by_value(estimated_value)
+            first_stage = Stage.objects.order_by('order').first()
+            if first_stage:
+                validated_data['stage'] = first_stage
         
-        instance = super().create(validated_data)
-        
-        # Calculate win_score on create
-        instance.win_score = self._calculate_win_score(instance)
-        instance.save(update_fields=['win_score'])
-        
-        return instance
-
-    def update(self, instance, validated_data):
-        # Check if any win_score-affecting fields are being updated
-        recalculate = any(
-            field in validated_data and validated_data[field] != getattr(instance, field)
-            for field in self.WIN_SCORE_FIELDS
-        )
-        
-        instance = super().update(instance, validated_data)
-        
-        # Recalculate win_score only if relevant fields changed
-        if recalculate:
-            instance.win_score = self._calculate_win_score(instance)
-            instance.save(update_fields=['win_score'])
-        
-        return instance
-    
-    def get_stage_by_value(self, value):
-        """Assign stage based on estimated dollar amount using first 3 stages"""
-        stages = list(Stage.objects.order_by('order')[:3])
-        
-        if not stages:
-            return None
-        
-        if value < STAGE_THRESHOLD_LOW:
-            return stages[0]
-        elif value < STAGE_THRESHOLD_MEDIUM:
-            return stages[1] if len(stages) >= 2 else stages[0]
-        else:
-            return stages[2] if len(stages) >= 3 else stages[-1]
+        return super().create(validated_data)
