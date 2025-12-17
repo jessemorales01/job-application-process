@@ -2504,3 +2504,247 @@ class EmailAccountAPITests(APITestCase):
         # Access token and refresh token should not be in response
         self.assertNotIn('access_token', response.data)
         self.assertNotIn('refresh_token', response.data)
+
+
+class GmailOAuthTests(APITestCase):
+    """Test Gmail OAuth 2.0 integration"""
+    
+    def setUp(self):
+        """Set up test user"""
+        self.user = User.objects.create_user(
+            username='testuser',
+            password='testpass123'
+        )
+        self.client.force_authenticate(user=self.user)
+    
+    @patch('crm.services.gmail_oauth.Flow')
+    def test_initiate_oauth_flow(self, mock_flow_class):
+        """Test initiating Gmail OAuth flow returns authorization URL"""
+        from crm.services.gmail_oauth import GmailOAuthService
+        
+        # Mock Flow instance
+        mock_flow = Mock()
+        mock_flow.authorization_url.return_value = (
+            'https://accounts.google.com/o/oauth2/auth?client_id=test&redirect_uri=...',
+            'state_token_123'
+        )
+        mock_flow_class.from_client_config.return_value = mock_flow
+        
+        service = GmailOAuthService()
+        auth_url, state = service.get_authorization_url(redirect_uri='http://localhost:8000/callback')
+        
+        self.assertIsNotNone(auth_url)
+        self.assertIn('accounts.google.com', auth_url)
+        self.assertIsNotNone(state)
+        mock_flow.authorization_url.assert_called_once()
+    
+    @patch('crm.services.gmail_oauth.Flow')
+    def test_handle_oauth_callback_success(self, mock_flow_class):
+        """Test handling OAuth callback with valid authorization code"""
+        from crm.services.gmail_oauth import GmailOAuthService
+        from crm.models import EmailAccount
+        from datetime import datetime, timedelta
+        
+        # Mock Flow instance
+        mock_flow = Mock()
+        mock_flow.fetch_token.return_value = {
+            'access_token': 'test_access_token',
+            'refresh_token': 'test_refresh_token',
+            'expires_in': 3600,
+            'token_type': 'Bearer'
+        }
+        mock_flow_class.from_client_config.return_value = mock_flow
+        
+        service = GmailOAuthService()
+        result = service.handle_callback(
+            authorization_code='test_code',
+            redirect_uri='http://localhost:8000/callback',
+            state='state_token_123'
+        )
+        
+        self.assertIsNotNone(result)
+        self.assertEqual(result['access_token'], 'test_access_token')
+        self.assertEqual(result['refresh_token'], 'test_refresh_token')
+        self.assertIn('expires_at', result)
+        mock_flow.fetch_token.assert_called_once()
+    
+    @patch('crm.services.gmail_oauth.Flow')
+    def test_handle_oauth_callback_invalid_code(self, mock_flow_class):
+        """Test handling OAuth callback with invalid authorization code"""
+        from crm.services.gmail_oauth import GmailOAuthService
+        from google.auth.exceptions import RefreshError
+        
+        # Mock Flow instance to raise error
+        mock_flow = Mock()
+        mock_flow.fetch_token.side_effect = RefreshError('Invalid authorization code')
+        mock_flow_class.from_client_config.return_value = mock_flow
+        
+        service = GmailOAuthService()
+        
+        with self.assertRaises(Exception):
+            service.handle_callback(
+                authorization_code='invalid_code',
+                redirect_uri='http://localhost:8000/callback',
+                state='state_token_123'
+            )
+    
+    @patch('crm.services.gmail_oauth.Credentials')
+    def test_refresh_access_token_success(self, mock_credentials_class):
+        """Test refreshing expired access token"""
+        from crm.services.gmail_oauth import GmailOAuthService
+        from crm.models import EmailAccount
+        from datetime import datetime, timedelta
+        
+        # Create email account with expired token
+        account = EmailAccount.objects.create(
+            user=self.user,
+            email='test@gmail.com',
+            provider='gmail',
+            access_token='old_token',
+            refresh_token='valid_refresh_token',
+            token_expires_at=datetime.now() - timedelta(hours=1)  # Expired
+        )
+        
+        # Mock refreshed credentials
+        mock_credentials = Mock()
+        mock_credentials.token = 'new_access_token'
+        mock_credentials.expiry = datetime.now() + timedelta(hours=1)
+        mock_credentials_class.from_authorized_user_info.return_value = mock_credentials
+        mock_credentials.refresh.return_value = None  # Refresh succeeds
+        
+        service = GmailOAuthService()
+        result = service.refresh_access_token(account)
+        
+        self.assertIsNotNone(result)
+        self.assertEqual(result['access_token'], 'new_access_token')
+        self.assertIn('expires_at', result)
+        mock_credentials.refresh.assert_called_once()
+    
+    @patch('crm.services.gmail_oauth.Credentials')
+    def test_refresh_access_token_failure(self, mock_credentials_class):
+        """Test refreshing access token when refresh token is invalid"""
+        from crm.services.gmail_oauth import GmailOAuthService
+        from crm.models import EmailAccount
+        from datetime import datetime, timedelta
+        from google.auth.exceptions import RefreshError
+        
+        # Create email account with invalid refresh token
+        account = EmailAccount.objects.create(
+            user=self.user,
+            email='test@gmail.com',
+            provider='gmail',
+            access_token='old_token',
+            refresh_token='invalid_refresh_token',
+            token_expires_at=datetime.now() - timedelta(hours=1)
+        )
+        
+        # Mock credentials that fail to refresh
+        mock_credentials = Mock()
+        mock_credentials.refresh.side_effect = RefreshError('Invalid refresh token')
+        mock_credentials_class.from_authorized_user_info.return_value = mock_credentials
+        
+        service = GmailOAuthService()
+        
+        with self.assertRaises(RefreshError):
+            service.refresh_access_token(account)
+    
+    def test_oauth_initiate_endpoint(self):
+        """Test API endpoint for initiating OAuth flow"""
+        response = self.client.get('/api/email-accounts/oauth/initiate/')
+        
+        # Should return authorization URL and state
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('authorization_url', response.data)
+        self.assertIn('state', response.data)
+        self.assertIn('accounts.google.com', response.data['authorization_url'])
+    
+    def test_oauth_callback_endpoint_success(self):
+        """Test API endpoint for handling OAuth callback"""
+        from crm.models import EmailAccount
+        
+        # Mock the OAuth service
+        with patch('crm.services.gmail_oauth.GmailOAuthService') as mock_service:
+            mock_service_instance = Mock()
+            mock_service_instance.handle_callback.return_value = {
+                'access_token': 'test_token',
+                'refresh_token': 'test_refresh',
+                'expires_at': '2024-12-31T00:00:00Z'
+            }
+            mock_service.return_value = mock_service_instance
+            
+            response = self.client.get('/api/email-accounts/oauth/callback/', {
+                'code': 'test_code',
+                'state': 'test_state'
+            })
+            
+            # Should create or update email account
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertTrue(EmailAccount.objects.filter(user=self.user).exists())
+    
+    def test_oauth_callback_endpoint_missing_code(self):
+        """Test OAuth callback endpoint with missing authorization code"""
+        response = self.client.get('/api/email-accounts/oauth/callback/', {
+            'state': 'test_state'
+        })
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('code', response.data)
+    
+    def test_refresh_token_endpoint_success(self):
+        """Test API endpoint for refreshing access token"""
+        from crm.models import EmailAccount
+        from datetime import datetime, timedelta
+        
+        # Create email account with expired token
+        account = EmailAccount.objects.create(
+            user=self.user,
+            email='test@gmail.com',
+            provider='gmail',
+            access_token='old_token',
+            refresh_token='valid_refresh',
+            token_expires_at=datetime.now() - timedelta(hours=1)
+        )
+        
+        # Mock the refresh service
+        with patch('crm.services.gmail_oauth.GmailOAuthService') as mock_service:
+            mock_service_instance = Mock()
+            mock_service_instance.refresh_access_token.return_value = {
+                'access_token': 'new_token',
+                'expires_at': '2024-12-31T00:00:00Z'
+            }
+            mock_service.return_value = mock_service_instance
+            
+            response = self.client.post(f'/api/email-accounts/{account.id}/refresh-token/')
+            
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertIn('access_token', response.data)
+    
+    def test_refresh_token_endpoint_no_account(self):
+        """Test refresh token endpoint when user has no email account"""
+        response = self.client.post('/api/email-accounts/999/refresh-token/')
+        
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+    
+    def test_refresh_token_endpoint_other_user_account(self):
+        """Test refresh token endpoint when accessing other user's account"""
+        from crm.models import EmailAccount
+        from datetime import datetime, timedelta
+        
+        other_user = User.objects.create_user(
+            username='otheruser',
+            password='testpass123'
+        )
+        
+        other_account = EmailAccount.objects.create(
+            user=other_user,
+            email='other@gmail.com',
+            provider='gmail',
+            access_token='token',
+            refresh_token='refresh',
+            token_expires_at=datetime.now() + timedelta(hours=1)
+        )
+        
+        response = self.client.post(f'/api/email-accounts/{other_account.id}/refresh-token/')
+        
+        # Should return 404 (not found) for security
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
