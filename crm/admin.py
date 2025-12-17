@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Interaction, Stage, Application
+from .models import Interaction, Stage, Application, EmailAccount
 
 
 @admin.register(Interaction)
@@ -19,4 +19,12 @@ class ApplicationAdmin(admin.ModelAdmin):
     list_display = ('company_name', 'position', 'stage', 'where_applied', 'salary_range', 'applied_date', 'created_at')
     search_fields = ('company_name', 'position', 'email', 'stack')
     list_filter = ('stage', 'where_applied', 'created_at')
+
+
+@admin.register(EmailAccount)
+class EmailAccountAdmin(admin.ModelAdmin):
+    list_display = ('user', 'email', 'provider', 'is_active', 'last_sync_at', 'created_at')
+    search_fields = ('email', 'user__username')
+    list_filter = ('provider', 'is_active', 'created_at')
+    readonly_fields = ('created_at', 'updated_at')
 

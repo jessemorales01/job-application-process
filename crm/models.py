@@ -133,3 +133,30 @@ class Assessment(models.Model):
 
     class Meta:
         ordering = ['deadline']  # Order by deadline (earliest first)
+
+
+class EmailAccount(models.Model):
+    """Model to store user email account connections for email integration"""
+    PROVIDER_CHOICES = [
+        ('gmail', 'Gmail'),
+        ('outlook', 'Outlook'),
+    ]
+    
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='email_account')
+    email = models.EmailField()
+    provider = models.CharField(max_length=20, choices=PROVIDER_CHOICES)
+    access_token = models.TextField(blank=True, help_text="OAuth access token (encrypted in production)")
+    refresh_token = models.TextField(blank=True, help_text="OAuth refresh token (encrypted in production)")
+    token_expires_at = models.DateTimeField(null=True, blank=True, help_text="When the access token expires")
+    is_active = models.BooleanField(default=True, help_text="Whether email sync is active")
+    last_sync_at = models.DateTimeField(null=True, blank=True, help_text="Last successful email sync timestamp")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.email} ({self.provider})"
+
+    class Meta:
+        db_table = 'email_accounts'
+        verbose_name = 'Email Account'
+        verbose_name_plural = 'Email Accounts'
