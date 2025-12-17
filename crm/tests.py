@@ -2301,3 +2301,206 @@ class EmailProcessorTests(TestCase):
         # Should still return a result
         self.assertIn('type', result)
         self.assertIn('confidence', result)
+
+
+class EmailAccountAPITests(APITestCase):
+    """Test EmailAccount API endpoints"""
+    
+    def setUp(self):
+        """Set up test user"""
+        self.user = User.objects.create_user(
+            username='testuser',
+            password='testpass123'
+        )
+        self.client.force_authenticate(user=self.user)
+    
+    def test_can_create_email_account(self):
+        """Test creating an email account via API"""
+        response = self.client.post('/api/email-accounts/', {
+            'email': 'test@gmail.com',
+            'provider': 'gmail'
+        })
+        
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['email'], 'test@gmail.com')
+        self.assertEqual(response.data['provider'], 'gmail')
+        self.assertEqual(response.data['is_active'], True)
+        self.assertEqual(response.data['user'], self.user.id)
+    
+    def test_user_can_only_have_one_email_account(self):
+        """Test that user can only have one email account (OneToOne relationship)"""
+        from .models import EmailAccount
+        
+        # Create first email account
+        EmailAccount.objects.create(
+            user=self.user,
+            email='test1@gmail.com',
+            provider='gmail'
+        )
+        
+        # Try to create second email account for same user
+        response = self.client.post('/api/email-accounts/', {
+            'email': 'test2@gmail.com',
+            'provider': 'gmail'
+        })
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        # Should have error about unique constraint
+        self.assertIn('user', response.data)
+    
+    def test_get_email_account(self):
+        """Test retrieving user's email account"""
+        from .models import EmailAccount
+        
+        account = EmailAccount.objects.create(
+            user=self.user,
+            email='test@gmail.com',
+            provider='gmail'
+        )
+        
+        response = self.client.get('/api/email-accounts/')
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Since it's OneToOne, should return single object or list with one item
+        # Check if it's a list or single object
+        if isinstance(response.data, list):
+            self.assertEqual(len(response.data), 1)
+            self.assertEqual(response.data[0]['email'], 'test@gmail.com')
+        else:
+            self.assertEqual(response.data['email'], 'test@gmail.com')
+    
+    def test_can_update_email_account(self):
+        """Test updating an email account via API"""
+        from .models import EmailAccount
+        
+        account = EmailAccount.objects.create(
+            user=self.user,
+            email='test@gmail.com',
+            provider='gmail'
+        )
+        
+        response = self.client.patch(f'/api/email-accounts/{account.id}/', {
+            'is_active': False,
+            'email': 'updated@gmail.com'
+        })
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['is_active'], False)
+        self.assertEqual(response.data['email'], 'updated@gmail.com')
+    
+    def test_can_delete_email_account(self):
+        """Test deleting an email account via API"""
+        from .models import EmailAccount
+        
+        account = EmailAccount.objects.create(
+            user=self.user,
+            email='test@gmail.com',
+            provider='gmail'
+        )
+        
+        response = self.client.delete(f'/api/email-accounts/{account.id}/')
+        
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(EmailAccount.objects.filter(id=account.id).exists())
+    
+    def test_user_only_sees_own_email_account(self):
+        """Test that users can only see their own email account"""
+        from .models import EmailAccount
+        
+        other_user = User.objects.create_user(
+            username='otheruser',
+            password='testpass123'
+        )
+        
+        # Create account for current user
+        my_account = EmailAccount.objects.create(
+            user=self.user,
+            email='myemail@gmail.com',
+            provider='gmail'
+        )
+        
+        # Create account for other user
+        other_account = EmailAccount.objects.create(
+            user=other_user,
+            email='otheremail@gmail.com',
+            provider='gmail'
+        )
+        
+        response = self.client.get('/api/email-accounts/')
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Should only see own account
+        if isinstance(response.data, list):
+            self.assertEqual(len(response.data), 1)
+            self.assertEqual(response.data[0]['id'], my_account.id)
+            self.assertEqual(response.data[0]['email'], 'myemail@gmail.com')
+        else:
+            self.assertEqual(response.data['id'], my_account.id)
+            self.assertEqual(response.data['email'], 'myemail@gmail.com')
+    
+    def test_cannot_access_other_user_email_account(self):
+        """Test that users cannot access other user's email account by ID"""
+        from .models import EmailAccount
+        
+        other_user = User.objects.create_user(
+            username='otheruser',
+            password='testpass123'
+        )
+        
+        other_account = EmailAccount.objects.create(
+            user=other_user,
+            email='otheremail@gmail.com',
+            provider='gmail'
+        )
+        
+        # Try to access other user's account
+        response = self.client.get(f'/api/email-accounts/{other_account.id}/')
+        
+        # Should return 404 (not found) or 403 (forbidden)
+        self.assertIn(response.status_code, [status.HTTP_404_NOT_FOUND, status.HTTP_403_FORBIDDEN])
+    
+    def test_email_account_requires_authentication(self):
+        """Test that email account endpoints require authentication"""
+        # Logout
+        self.client.force_authenticate(user=None)
+        
+        response = self.client.get('/api/email-accounts/')
+        
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+    
+    def test_email_account_validation(self):
+        """Test that email and provider fields are required"""
+        response = self.client.post('/api/email-accounts/', {})
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('email', response.data)
+        self.assertIn('provider', response.data)
+    
+    def test_email_account_provider_choices(self):
+        """Test that provider must be a valid choice"""
+        response = self.client.post('/api/email-accounts/', {
+            'email': 'test@gmail.com',
+            'provider': 'invalid_provider'
+        })
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('provider', response.data)
+    
+    def test_email_account_sensitive_fields_not_exposed(self):
+        """Test that sensitive fields like access_token are not exposed in API"""
+        from .models import EmailAccount
+        
+        account = EmailAccount.objects.create(
+            user=self.user,
+            email='test@gmail.com',
+            provider='gmail',
+            access_token='secret_token',
+            refresh_token='secret_refresh_token'
+        )
+        
+        response = self.client.get(f'/api/email-accounts/{account.id}/')
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Access token and refresh token should not be in response
+        self.assertNotIn('access_token', response.data)
+        self.assertNotIn('refresh_token', response.data)
