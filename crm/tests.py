@@ -1,5 +1,6 @@
 from django.test import TestCase
 from django.contrib.auth.models import User
+from django.db import IntegrityError
 from rest_framework.test import APITestCase
 from rest_framework import status
 from .models import Stage, Application
@@ -1339,3 +1340,101 @@ class CacheTests(APITestCase):
         # Test keys are different for different users
         key3 = get_cache_key('applications', user_id=2)
         self.assertNotEqual(key1, key3)
+
+
+class EmailAccountModelTests(TestCase):
+    """Test the EmailAccount model for email integration"""
+    
+    def setUp(self):
+        """Set up test user"""
+        self.user = User.objects.create_user(
+            username='testuser',
+            password='testpass123'
+        )
+    
+    def test_can_create_email_account(self):
+        """Test creating an email account with required fields"""
+        from .models import EmailAccount
+        
+        account = EmailAccount.objects.create(
+            user=self.user,
+            email='test@gmail.com',
+            provider='gmail',
+            is_active=True
+        )
+        
+        self.assertEqual(account.user, self.user)
+        self.assertEqual(account.email, 'test@gmail.com')
+        self.assertEqual(account.provider, 'gmail')
+        self.assertTrue(account.is_active)
+        self.assertIsNotNone(account.id)
+        self.assertIsNotNone(account.created_at)
+        self.assertIsNotNone(account.updated_at)
+    
+    def test_email_account_one_per_user(self):
+        """Test that a user can only have one email account"""
+        from .models import EmailAccount
+        
+        # Create first email account
+        EmailAccount.objects.create(
+            user=self.user,
+            email='test@gmail.com',
+            provider='gmail'
+        )
+        
+        # Try to create second email account for same user
+        with self.assertRaises(IntegrityError):
+            EmailAccount.objects.create(
+                user=self.user,
+                email='test2@gmail.com',
+                provider='gmail'
+            )
+    
+    def test_email_account_string_representation(self):
+        """Test email account string representation"""
+        from .models import EmailAccount
+        
+        account = EmailAccount.objects.create(
+            user=self.user,
+            email='test@gmail.com',
+            provider='gmail'
+        )
+        
+        self.assertEqual(str(account), 'test@gmail.com (gmail)')
+    
+    def test_email_account_provider_choices(self):
+        """Test that provider field accepts valid choices"""
+        from .models import EmailAccount
+        
+        # Test Gmail
+        gmail_account = EmailAccount.objects.create(
+            user=self.user,
+            email='test@gmail.com',
+            provider='gmail'
+        )
+        self.assertEqual(gmail_account.provider, 'gmail')
+        
+        # Create another user for Outlook test
+        user2 = User.objects.create_user(username='testuser2', password='testpass123')
+        outlook_account = EmailAccount.objects.create(
+            user=user2,
+            email='test@outlook.com',
+            provider='outlook'
+        )
+        self.assertEqual(outlook_account.provider, 'outlook')
+    
+    def test_email_account_default_values(self):
+        """Test that email account has correct default values"""
+        from .models import EmailAccount
+        
+        account = EmailAccount.objects.create(
+            user=self.user,
+            email='test@gmail.com',
+            provider='gmail'
+        )
+        
+        self.assertTrue(account.is_active)  # Default should be True
+        self.assertEqual(account.access_token, '')  # Default should be empty
+        self.assertEqual(account.refresh_token, '')  # Default should be empty
+        self.assertIsNone(account.token_expires_at)  # Default should be None
+        self.assertIsNone(account.last_sync_at)  # Default should be None
