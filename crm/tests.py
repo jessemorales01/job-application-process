@@ -2544,15 +2544,18 @@ class GmailOAuthTests(APITestCase):
         from crm.services.gmail_oauth import GmailOAuthService
         from crm.models import EmailAccount
         from datetime import datetime, timedelta
+        from django.utils import timezone
         
-        # Mock Flow instance
+        # Mock Flow instance with credentials
+        mock_credentials = Mock()
+        mock_credentials.token = 'test_access_token'
+        mock_credentials.refresh_token = 'test_refresh_token'
+        mock_credentials.expiry = timezone.now() + timedelta(hours=1)
+        mock_credentials.token_response = {'expires_in': 3600}
+        
         mock_flow = Mock()
-        mock_flow.fetch_token.return_value = {
-            'access_token': 'test_access_token',
-            'refresh_token': 'test_refresh_token',
-            'expires_in': 3600,
-            'token_type': 'Bearer'
-        }
+        mock_flow.credentials = mock_credentials
+        mock_flow.fetch_token.return_value = None  # fetch_token doesn't return anything, it sets credentials
         mock_flow_class.from_client_config.return_value = mock_flow
         
         service = GmailOAuthService()
@@ -2596,19 +2599,21 @@ class GmailOAuthTests(APITestCase):
         from datetime import datetime, timedelta
         
         # Create email account with expired token
+        from django.utils import timezone
         account = EmailAccount.objects.create(
             user=self.user,
             email='test@gmail.com',
             provider='gmail',
             access_token='old_token',
             refresh_token='valid_refresh_token',
-            token_expires_at=datetime.now() - timedelta(hours=1)  # Expired
+            token_expires_at=timezone.now() - timedelta(hours=1)  # Expired
         )
         
         # Mock refreshed credentials
+        from django.utils import timezone
         mock_credentials = Mock()
         mock_credentials.token = 'new_access_token'
-        mock_credentials.expiry = datetime.now() + timedelta(hours=1)
+        mock_credentials.expiry = timezone.now() + timedelta(hours=1)
         mock_credentials_class.from_authorized_user_info.return_value = mock_credentials
         mock_credentials.refresh.return_value = None  # Refresh succeeds
         
@@ -2629,13 +2634,14 @@ class GmailOAuthTests(APITestCase):
         from google.auth.exceptions import RefreshError
         
         # Create email account with invalid refresh token
+        from django.utils import timezone
         account = EmailAccount.objects.create(
             user=self.user,
             email='test@gmail.com',
             provider='gmail',
             access_token='old_token',
             refresh_token='invalid_refresh_token',
-            token_expires_at=datetime.now() - timedelta(hours=1)
+            token_expires_at=timezone.now() - timedelta(hours=1)
         )
         
         # Mock credentials that fail to refresh
@@ -2648,8 +2654,17 @@ class GmailOAuthTests(APITestCase):
         with self.assertRaises(RefreshError):
             service.refresh_access_token(account)
     
-    def test_oauth_initiate_endpoint(self):
+    @patch('crm.services.gmail_oauth.Flow')
+    def test_oauth_initiate_endpoint(self, mock_flow_class):
         """Test API endpoint for initiating OAuth flow"""
+        # Mock Flow instance
+        mock_flow = Mock()
+        mock_flow.authorization_url.return_value = (
+            'https://accounts.google.com/o/oauth2/auth?client_id=test&redirect_uri=...',
+            'state_token_123'
+        )
+        mock_flow_class.from_client_config.return_value = mock_flow
+        
         response = self.client.get('/api/email-accounts/oauth/initiate/')
         
         # Should return authorization URL and state
@@ -2696,13 +2711,14 @@ class GmailOAuthTests(APITestCase):
         from datetime import datetime, timedelta
         
         # Create email account with expired token
+        from django.utils import timezone
         account = EmailAccount.objects.create(
             user=self.user,
             email='test@gmail.com',
             provider='gmail',
             access_token='old_token',
             refresh_token='valid_refresh',
-            token_expires_at=datetime.now() - timedelta(hours=1)
+            token_expires_at=timezone.now() - timedelta(hours=1)
         )
         
         # Mock the refresh service
@@ -2717,7 +2733,8 @@ class GmailOAuthTests(APITestCase):
             response = self.client.post(f'/api/email-accounts/{account.id}/refresh-token/')
             
             self.assertEqual(response.status_code, status.HTTP_200_OK)
-            self.assertIn('access_token', response.data)
+            self.assertIn('expires_at', response.data)
+            self.assertIn('message', response.data)
     
     def test_refresh_token_endpoint_no_account(self):
         """Test refresh token endpoint when user has no email account"""
@@ -2735,13 +2752,14 @@ class GmailOAuthTests(APITestCase):
             password='testpass123'
         )
         
+        from django.utils import timezone
         other_account = EmailAccount.objects.create(
             user=other_user,
             email='other@gmail.com',
             provider='gmail',
             access_token='token',
             refresh_token='refresh',
-            token_expires_at=datetime.now() + timedelta(hours=1)
+            token_expires_at=timezone.now() + timedelta(hours=1)
         )
         
         response = self.client.post(f'/api/email-accounts/{other_account.id}/refresh-token/')
