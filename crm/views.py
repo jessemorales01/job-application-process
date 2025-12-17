@@ -3,10 +3,11 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from django.contrib.auth.models import User
-from .models import Interaction, Stage, Application, JobOffer, Assessment
+from .models import Interaction, Stage, Application, JobOffer, Assessment, EmailAccount
 from .serializers import (
     UserSerializer,
-    InteractionSerializer, StageSerializer, ApplicationSerializer, JobOfferSerializer, AssessmentSerializer
+    InteractionSerializer, StageSerializer, ApplicationSerializer, JobOfferSerializer, AssessmentSerializer,
+    EmailAccountSerializer
 )
 from .mixins import CacheResponseMixin
 from .cache_utils import CACHE_TTL
@@ -116,4 +117,53 @@ class AssessmentViewSet(CacheResponseMixin, viewsets.ModelViewSet):
         if self.request.user.is_staff:
             return qs.all()
         return qs.filter(created_by=self.request.user)
+
+
+class EmailAccountViewSet(CacheResponseMixin, viewsets.ModelViewSet):
+    """ViewSet for EmailAccount CRUD operations"""
+    queryset = EmailAccount.objects.select_related('user').all()
+    serializer_class = EmailAccountSerializer
+    cache_prefix = 'email_accounts'
+    cache_ttl = CACHE_TTL.get('email_accounts', 300)  # 5 minutes default
+    cache_user_specific = True
+
+    def perform_create(self, serializer):
+        """Set the user to the current authenticated user"""
+        serializer.save(user=self.request.user)
+
+    def get_queryset(self):
+        """Users can only see their own email account"""
+        qs = EmailAccount.objects.select_related('user')
+        if self.request.user.is_staff:
+            return qs.all()
+        return qs.filter(user=self.request.user)
+    
+    def list(self, request, *args, **kwargs):
+        """Override list to handle OneToOne relationship"""
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        # For OneToOne, there's at most one account per user
+        account = queryset.first()
+        
+        if account:
+            serializer = self.get_serializer(account)
+            return Response(serializer.data)
+        else:
+            # Return empty response (no account connected yet)
+            return Response(None, status=status.HTTP_200_OK)
+    
+    def retrieve(self, request, *args, **kwargs):
+        """Override retrieve to ensure user can only access their own account"""
+        instance = self.get_object()
+        
+        # Check if user owns this account (unless staff)
+        # instance.user is already loaded via select_related, no extra query
+        if not request.user.is_staff and instance.user != request.user:
+            return Response(
+                {'detail': 'Not found.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
 

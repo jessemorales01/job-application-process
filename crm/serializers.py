@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import Interaction, Stage, Application, JobOffer, Assessment
+from .models import Interaction, Stage, Application, JobOffer, Assessment, EmailAccount
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -116,3 +116,27 @@ class AssessmentSerializer(serializers.ModelSerializer):
         model = Assessment
         fields = '__all__'
         read_only_fields = ('created_by', 'created_at', 'updated_at')
+
+
+class EmailAccountSerializer(serializers.ModelSerializer):
+    """Serializer for EmailAccount model"""
+    user = serializers.PrimaryKeyRelatedField(read_only=True)
+
+    class Meta:
+        model = EmailAccount
+        fields = ('id', 'user', 'email', 'provider', 'is_active', 'last_sync_at', 'created_at', 'updated_at')
+        read_only_fields = ('user', 'created_at', 'updated_at')
+    
+    def validate(self, data):
+        """Validate that user doesn't already have an email account"""
+        user = self.context['request'].user
+        
+        # Check if user already has an email account (only on create)
+        # Using exists() for efficient single query check
+        if self.instance is None:  # Only on create
+            if EmailAccount.objects.filter(user=user).exists():
+                raise serializers.ValidationError({
+                    'user': 'You already have an email account connected. Please update or delete the existing one first.'
+                })
+        
+        return data
