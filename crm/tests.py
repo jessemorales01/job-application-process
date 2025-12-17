@@ -1797,10 +1797,14 @@ class AIEmailAnalyzerTests(TestCase):
         cache.clear()
     
     @patch('crm.services.ai_email_analyzer.OpenAI')
-    def test_analyze_application_email(self, mock_openai_class):
+    @patch('crm.services.ai_email_analyzer.settings')
+    def test_analyze_application_email(self, mock_settings, mock_openai_class):
         """Test AI analysis of application confirmation email"""
         import json
         from crm.services.ai_email_analyzer import AIEmailAnalyzer
+        
+        # Set mock API key
+        mock_settings.OPENAI_API_KEY = 'test-api-key'
         
         # Mock OpenAI response
         mock_response = Mock()
@@ -1829,10 +1833,13 @@ class AIEmailAnalyzerTests(TestCase):
         self.assertGreater(result['confidence'], 0.9)
     
     @patch('crm.services.ai_email_analyzer.OpenAI')
-    def test_analyze_rejection_email(self, mock_openai_class):
+    @patch('crm.services.ai_email_analyzer.settings')
+    def test_analyze_rejection_email(self, mock_settings, mock_openai_class):
         """Test AI analysis of rejection email"""
         import json
         from crm.services.ai_email_analyzer import AIEmailAnalyzer
+        
+        mock_settings.OPENAI_API_KEY = 'test-api-key'
         
         mock_response = Mock()
         mock_response.choices = [Mock()]
@@ -1858,10 +1865,13 @@ class AIEmailAnalyzerTests(TestCase):
         self.assertGreater(result['confidence'], 0.9)
     
     @patch('crm.services.ai_email_analyzer.OpenAI')
-    def test_analyze_assessment_email(self, mock_openai_class):
+    @patch('crm.services.ai_email_analyzer.settings')
+    def test_analyze_assessment_email(self, mock_settings, mock_openai_class):
         """Test AI analysis of assessment email"""
         import json
         from crm.services.ai_email_analyzer import AIEmailAnalyzer
+        
+        mock_settings.OPENAI_API_KEY = 'test-api-key'
         
         mock_response = Mock()
         mock_response.choices = [Mock()]
@@ -1889,9 +1899,12 @@ class AIEmailAnalyzerTests(TestCase):
         self.assertGreater(result['confidence'], 0.8)
     
     @patch('crm.services.ai_email_analyzer.OpenAI')
-    def test_handles_api_errors_gracefully(self, mock_openai_class):
+    @patch('crm.services.ai_email_analyzer.settings')
+    def test_handles_api_errors_gracefully(self, mock_settings, mock_openai_class):
         """Test that API errors don't crash the service"""
         from crm.services.ai_email_analyzer import AIEmailAnalyzer
+        
+        mock_settings.OPENAI_API_KEY = 'test-api-key'
         
         # Mock OpenAI to raise an exception
         mock_client = Mock()
@@ -1911,9 +1924,12 @@ class AIEmailAnalyzerTests(TestCase):
         self.assertIn('error', result)
     
     @patch('crm.services.ai_email_analyzer.OpenAI')
-    def test_handles_invalid_json_response(self, mock_openai_class):
+    @patch('crm.services.ai_email_analyzer.settings')
+    def test_handles_invalid_json_response(self, mock_settings, mock_openai_class):
         """Test handling of invalid JSON from OpenAI"""
         from crm.services.ai_email_analyzer import AIEmailAnalyzer
+        
+        mock_settings.OPENAI_API_KEY = 'test-api-key'
         
         # Mock OpenAI to return invalid JSON
         mock_response = Mock()
@@ -1937,11 +1953,14 @@ class AIEmailAnalyzerTests(TestCase):
         self.assertIn('error', result)
     
     @patch('crm.services.ai_email_analyzer.OpenAI')
-    def test_caching_behavior(self, mock_openai_class):
+    @patch('crm.services.ai_email_analyzer.settings')
+    def test_caching_behavior(self, mock_settings, mock_openai_class):
         """Test that results are cached and reused"""
         import json
         from django.core.cache import cache
         from crm.services.ai_email_analyzer import AIEmailAnalyzer
+        
+        mock_settings.OPENAI_API_KEY = 'test-api-key'
         
         mock_response = Mock()
         mock_response.choices = [Mock()]
@@ -1977,10 +1996,13 @@ class AIEmailAnalyzerTests(TestCase):
         self.assertEqual(mock_client.chat.completions.create.call_count, 1)
     
     @patch('crm.services.ai_email_analyzer.OpenAI')
-    def test_different_emails_not_cached_together(self, mock_openai_class):
+    @patch('crm.services.ai_email_analyzer.settings')
+    def test_different_emails_not_cached_together(self, mock_settings, mock_openai_class):
         """Test that different emails don't share cache"""
         import json
         from crm.services.ai_email_analyzer import AIEmailAnalyzer
+        
+        mock_settings.OPENAI_API_KEY = 'test-api-key'
         
         mock_response = Mock()
         mock_response.choices = [Mock()]
@@ -2014,10 +2036,13 @@ class AIEmailAnalyzerTests(TestCase):
         self.assertEqual(mock_client.chat.completions.create.call_count, 2)
     
     @patch('crm.services.ai_email_analyzer.OpenAI')
-    def test_return_structure(self, mock_openai_class):
+    @patch('crm.services.ai_email_analyzer.settings')
+    def test_return_structure(self, mock_settings, mock_openai_class):
         """Test that analyze_email returns correct structure"""
         import json
         from crm.services.ai_email_analyzer import AIEmailAnalyzer
+        
+        mock_settings.OPENAI_API_KEY = 'test-api-key'
         
         mock_response = Mock()
         mock_response.choices = [Mock()]
@@ -2044,10 +2069,13 @@ class AIEmailAnalyzerTests(TestCase):
         self.assertIsInstance(result['confidence'], (int, float))
     
     @patch('crm.services.ai_email_analyzer.OpenAI')
-    def test_uses_correct_model_and_parameters(self, mock_openai_class):
+    @patch('crm.services.ai_email_analyzer.settings')
+    def test_uses_correct_model_and_parameters(self, mock_settings, mock_openai_class):
         """Test that OpenAI API is called with correct parameters"""
         import json
         from crm.services.ai_email_analyzer import AIEmailAnalyzer
+        
+        mock_settings.OPENAI_API_KEY = 'test-api-key'
         
         mock_response = Mock()
         mock_response.choices = [Mock()]
@@ -2068,7 +2096,9 @@ class AIEmailAnalyzerTests(TestCase):
         )
         
         # Verify API was called with correct parameters
+        self.assertTrue(mock_client.chat.completions.create.called)
         call_args = mock_client.chat.completions.create.call_args
+        self.assertIsNotNone(call_args)
         self.assertEqual(call_args.kwargs['model'], 'gpt-3.5-turbo')
         self.assertEqual(call_args.kwargs['temperature'], 0.1)
         self.assertEqual(call_args.kwargs['max_tokens'], 500)
