@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Interaction, Stage, Application, EmailAccount
+from .models import Interaction, Stage, Application, EmailAccount, AutoDetectedApplication
 
 
 @admin.register(Interaction)
@@ -27,4 +27,13 @@ class EmailAccountAdmin(admin.ModelAdmin):
     search_fields = ('email', 'user__username')
     list_filter = ('provider', 'is_active', 'created_at')
     readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(AutoDetectedApplication)
+class AutoDetectedApplicationAdmin(admin.ModelAdmin):
+    list_display = ('company_name', 'position', 'status', 'confidence_score', 'detected_at', 'reviewed_at')
+    search_fields = ('company_name', 'position', 'email_message_id')
+    list_filter = ('status', 'confidence_score', 'detected_at')
+    readonly_fields = ('detected_at', 'reviewed_at')
+    date_hierarchy = 'detected_at'
 

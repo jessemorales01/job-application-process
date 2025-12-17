@@ -160,3 +160,36 @@ class EmailAccount(models.Model):
         db_table = 'email_accounts'
         verbose_name = 'Email Account'
         verbose_name_plural = 'Email Accounts'
+
+
+class AutoDetectedApplication(models.Model):
+    """Model to store auto-detected applications from emails"""
+    STATUS_CHOICES = [
+        ('pending', 'Pending Review'),
+        ('accepted', 'Accepted'),
+        ('rejected', 'Rejected'),
+        ('merged', 'Merged with Existing'),
+    ]
+    
+    email_account = models.ForeignKey(EmailAccount, on_delete=models.CASCADE, related_name='detected_applications')
+    email_message_id = models.CharField(max_length=255, db_index=True, help_text="Unique email message ID to prevent duplicates")
+    company_name = models.CharField(max_length=200)
+    position = models.CharField(max_length=200, blank=True)
+    where_applied = models.CharField(max_length=100, blank=True)
+    confidence_score = models.FloatField(default=0.0, help_text="Confidence score from 0.0 to 1.0")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    detected_at = models.DateTimeField(auto_now_add=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    merged_into_application = models.ForeignKey('Application', on_delete=models.SET_NULL, null=True, blank=True, related_name='merged_from_detected')
+    
+    def __str__(self):
+        position_str = f" - {self.position}" if self.position else ""
+        return f"{self.company_name}{position_str} (Detected)"
+    
+    class Meta:
+        ordering = ['-detected_at']
+        indexes = [
+            models.Index(fields=['email_account', 'status']),
+        ]
+        verbose_name = 'Auto-Detected Application'
+        verbose_name_plural = 'Auto-Detected Applications'
