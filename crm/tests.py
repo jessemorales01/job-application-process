@@ -3,6 +3,7 @@ from django.contrib.auth.models import User
 from django.db import IntegrityError
 from rest_framework.test import APITestCase
 from rest_framework import status
+from unittest.mock import patch, Mock
 from .models import Stage, Application
 from .serializers import ApplicationSerializer
 
@@ -1783,3 +1784,292 @@ class EmailParserTests(TestCase):
         
         self.assertEqual(result['type'], 'application')
         self.assertGreater(result['confidence'], 0.7)
+
+
+class AIEmailAnalyzerTests(TestCase):
+    """Tests for the AIEmailAnalyzer service"""
+    
+    def setUp(self):
+        """Set up test environment"""
+        from unittest.mock import patch
+        from django.core.cache import cache
+        # Clear cache before each test
+        cache.clear()
+    
+    @patch('crm.services.ai_email_analyzer.OpenAI')
+    def test_analyze_application_email(self, mock_openai_class):
+        """Test AI analysis of application confirmation email"""
+        import json
+        from crm.services.ai_email_analyzer import AIEmailAnalyzer
+        
+        # Mock OpenAI response
+        mock_response = Mock()
+        mock_response.choices = [Mock()]
+        mock_response.choices[0].message.content = json.dumps({
+            'type': 'application_confirmation',
+            'company_name': 'Google',
+            'position': 'Software Engineer',
+            'confidence': 0.95
+        })
+        
+        mock_client = Mock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai_class.return_value = mock_client
+        
+        analyzer = AIEmailAnalyzer()
+        result = analyzer.analyze_email(
+            subject="Thank you",
+            body="We received your application",
+            sender="noreply@google.com"
+        )
+        
+        self.assertEqual(result['type'], 'application_confirmation')
+        self.assertEqual(result['company_name'], 'Google')
+        self.assertEqual(result['position'], 'Software Engineer')
+        self.assertGreater(result['confidence'], 0.9)
+    
+    @patch('crm.services.ai_email_analyzer.OpenAI')
+    def test_analyze_rejection_email(self, mock_openai_class):
+        """Test AI analysis of rejection email"""
+        import json
+        from crm.services.ai_email_analyzer import AIEmailAnalyzer
+        
+        mock_response = Mock()
+        mock_response.choices = [Mock()]
+        mock_response.choices[0].message.content = json.dumps({
+            'type': 'rejection',
+            'company_name': 'Microsoft',
+            'confidence': 0.92
+        })
+        
+        mock_client = Mock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai_class.return_value = mock_client
+        
+        analyzer = AIEmailAnalyzer()
+        result = analyzer.analyze_email(
+            subject="Update",
+            body="We've decided to move forward with other candidates",
+            sender="recruiter@microsoft.com"
+        )
+        
+        self.assertEqual(result['type'], 'rejection')
+        self.assertEqual(result['company_name'], 'Microsoft')
+        self.assertGreater(result['confidence'], 0.9)
+    
+    @patch('crm.services.ai_email_analyzer.OpenAI')
+    def test_analyze_assessment_email(self, mock_openai_class):
+        """Test AI analysis of assessment email"""
+        import json
+        from crm.services.ai_email_analyzer import AIEmailAnalyzer
+        
+        mock_response = Mock()
+        mock_response.choices = [Mock()]
+        mock_response.choices[0].message.content = json.dumps({
+            'type': 'assessment',
+            'company_name': 'Amazon',
+            'deadline': '2024-12-31',
+            'confidence': 0.88
+        })
+        
+        mock_client = Mock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai_class.return_value = mock_client
+        
+        analyzer = AIEmailAnalyzer()
+        result = analyzer.analyze_email(
+            subject="Next Steps",
+            body="Please complete the technical assessment",
+            sender="recruiter@amazon.com"
+        )
+        
+        self.assertEqual(result['type'], 'assessment')
+        self.assertEqual(result['company_name'], 'Amazon')
+        self.assertEqual(result['deadline'], '2024-12-31')
+        self.assertGreater(result['confidence'], 0.8)
+    
+    @patch('crm.services.ai_email_analyzer.OpenAI')
+    def test_handles_api_errors_gracefully(self, mock_openai_class):
+        """Test that API errors don't crash the service"""
+        from crm.services.ai_email_analyzer import AIEmailAnalyzer
+        
+        # Mock OpenAI to raise an exception
+        mock_client = Mock()
+        mock_client.chat.completions.create.side_effect = Exception("API Error")
+        mock_openai_class.return_value = mock_client
+        
+        analyzer = AIEmailAnalyzer()
+        result = analyzer.analyze_email(
+            subject="Test",
+            body="Test body",
+            sender="test@example.com"
+        )
+        
+        # Should return error response instead of crashing
+        self.assertEqual(result['type'], 'unknown')
+        self.assertEqual(result['confidence'], 0.0)
+        self.assertIn('error', result)
+    
+    @patch('crm.services.ai_email_analyzer.OpenAI')
+    def test_handles_invalid_json_response(self, mock_openai_class):
+        """Test handling of invalid JSON from OpenAI"""
+        from crm.services.ai_email_analyzer import AIEmailAnalyzer
+        
+        # Mock OpenAI to return invalid JSON
+        mock_response = Mock()
+        mock_response.choices = [Mock()]
+        mock_response.choices[0].message.content = "Invalid JSON response"
+        
+        mock_client = Mock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai_class.return_value = mock_client
+        
+        analyzer = AIEmailAnalyzer()
+        result = analyzer.analyze_email(
+            subject="Test",
+            body="Test body",
+            sender="test@example.com"
+        )
+        
+        # Should handle JSON parsing error gracefully
+        self.assertEqual(result['type'], 'unknown')
+        self.assertEqual(result['confidence'], 0.0)
+        self.assertIn('error', result)
+    
+    @patch('crm.services.ai_email_analyzer.OpenAI')
+    def test_caching_behavior(self, mock_openai_class):
+        """Test that results are cached and reused"""
+        import json
+        from django.core.cache import cache
+        from crm.services.ai_email_analyzer import AIEmailAnalyzer
+        
+        mock_response = Mock()
+        mock_response.choices = [Mock()]
+        mock_response.choices[0].message.content = json.dumps({
+            'type': 'application_confirmation',
+            'company_name': 'Cached Company',
+            'confidence': 0.95
+        })
+        
+        mock_client = Mock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai_class.return_value = mock_client
+        
+        analyzer = AIEmailAnalyzer()
+        
+        # First call - should call API
+        result1 = analyzer.analyze_email(
+            subject="Test Subject",
+            body="Test Body",
+            sender="test@example.com"
+        )
+        
+        # Second call with same content - should use cache
+        result2 = analyzer.analyze_email(
+            subject="Test Subject",
+            body="Test Body",
+            sender="test@example.com"
+        )
+        
+        # Results should be the same
+        self.assertEqual(result1, result2)
+        # API should only be called once (cached on second call)
+        self.assertEqual(mock_client.chat.completions.create.call_count, 1)
+    
+    @patch('crm.services.ai_email_analyzer.OpenAI')
+    def test_different_emails_not_cached_together(self, mock_openai_class):
+        """Test that different emails don't share cache"""
+        import json
+        from crm.services.ai_email_analyzer import AIEmailAnalyzer
+        
+        mock_response = Mock()
+        mock_response.choices = [Mock()]
+        mock_response.choices[0].message.content = json.dumps({
+            'type': 'application_confirmation',
+            'company_name': 'Test Company',
+            'confidence': 0.95
+        })
+        
+        mock_client = Mock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai_class.return_value = mock_client
+        
+        analyzer = AIEmailAnalyzer()
+        
+        # First email
+        analyzer.analyze_email(
+            subject="Email 1",
+            body="Body 1",
+            sender="test1@example.com"
+        )
+        
+        # Second email with different content
+        analyzer.analyze_email(
+            subject="Email 2",
+            body="Body 2",
+            sender="test2@example.com"
+        )
+        
+        # API should be called twice (different cache keys)
+        self.assertEqual(mock_client.chat.completions.create.call_count, 2)
+    
+    @patch('crm.services.ai_email_analyzer.OpenAI')
+    def test_return_structure(self, mock_openai_class):
+        """Test that analyze_email returns correct structure"""
+        import json
+        from crm.services.ai_email_analyzer import AIEmailAnalyzer
+        
+        mock_response = Mock()
+        mock_response.choices = [Mock()]
+        mock_response.choices[0].message.content = json.dumps({
+            'type': 'application_confirmation',
+            'company_name': 'Test',
+            'confidence': 0.9
+        })
+        
+        mock_client = Mock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai_class.return_value = mock_client
+        
+        analyzer = AIEmailAnalyzer()
+        result = analyzer.analyze_email(
+            subject="Test",
+            body="Test body",
+            sender="test@example.com"
+        )
+        
+        # Check required keys
+        self.assertIn('type', result)
+        self.assertIn('confidence', result)
+        self.assertIsInstance(result['confidence'], (int, float))
+    
+    @patch('crm.services.ai_email_analyzer.OpenAI')
+    def test_uses_correct_model_and_parameters(self, mock_openai_class):
+        """Test that OpenAI API is called with correct parameters"""
+        import json
+        from crm.services.ai_email_analyzer import AIEmailAnalyzer
+        
+        mock_response = Mock()
+        mock_response.choices = [Mock()]
+        mock_response.choices[0].message.content = json.dumps({
+            'type': 'application_confirmation',
+            'confidence': 0.9
+        })
+        
+        mock_client = Mock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai_class.return_value = mock_client
+        
+        analyzer = AIEmailAnalyzer()
+        analyzer.analyze_email(
+            subject="Test",
+            body="Test body",
+            sender="test@example.com"
+        )
+        
+        # Verify API was called with correct parameters
+        call_args = mock_client.chat.completions.create.call_args
+        self.assertEqual(call_args.kwargs['model'], 'gpt-3.5-turbo')
+        self.assertEqual(call_args.kwargs['temperature'], 0.1)
+        self.assertEqual(call_args.kwargs['max_tokens'], 500)
+        self.assertIn('messages', call_args.kwargs)
