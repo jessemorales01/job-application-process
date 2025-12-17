@@ -152,3 +152,34 @@ SIMPLE_JWT = {
     'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
 }
 
+# Cache configuration
+# Uses Redis in production, falls back to local memory cache in development
+try:
+    import django_redis
+    # Try to use Redis if available
+    CACHES = {
+        'default': {
+            'BACKEND': 'django_redis.cache.RedisCache',
+            'LOCATION': 'redis://127.0.0.1:6379/1',  # Use database 1 for cache
+            'OPTIONS': {
+                'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+                'SOCKET_CONNECT_TIMEOUT': 5,  # seconds
+                'SOCKET_TIMEOUT': 5,  # seconds
+                'COMPRESSOR': 'django_redis.compressors.zlib.ZlibCompressor',
+                'IGNORE_EXCEPTIONS': True,  # Fallback to database if Redis is unavailable
+            },
+            'KEY_PREFIX': 'job_process_tracker',
+            'TIMEOUT': 300,  # Default timeout (5 minutes)
+        }
+    }
+except ImportError:
+    # Fallback to local memory cache if django-redis is not installed
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'unique-snowflake',
+            'KEY_PREFIX': 'job_process_tracker',
+            'TIMEOUT': 300,  # Default timeout (5 minutes)
+        }
+    }
+

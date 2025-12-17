@@ -8,6 +8,8 @@ from .serializers import (
     UserSerializer,
     InteractionSerializer, StageSerializer, ApplicationSerializer, JobOfferSerializer, AssessmentSerializer
 )
+from .mixins import CacheResponseMixin
+from .cache_utils import CACHE_TTL
 
 
 @api_view(['POST'])
@@ -21,10 +23,13 @@ def register(request):
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-class InteractionViewSet(viewsets.ModelViewSet):
+class InteractionViewSet(CacheResponseMixin, viewsets.ModelViewSet):
     """ViewSet for Interaction CRUD operations"""
     queryset = Interaction.objects.select_related('application', 'created_by').all()
     serializer_class = InteractionSerializer
+    cache_prefix = 'interactions'
+    cache_ttl = CACHE_TTL['interactions']  # 5 minutes
+    cache_user_specific = True
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
@@ -37,10 +42,13 @@ class InteractionViewSet(viewsets.ModelViewSet):
         return qs.filter(created_by=self.request.user)
 
 
-class StageViewSet(viewsets.ModelViewSet):
+class StageViewSet(CacheResponseMixin, viewsets.ModelViewSet):
     """API endpoint to view and edit Stages"""
     queryset = Stage.objects.all().order_by('order')
     serializer_class = StageSerializer
+    cache_prefix = 'stages'
+    cache_ttl = CACHE_TTL['stages']  # 24 hours - stages rarely change
+    cache_user_specific = False  # Stages are shared across all users
 
     def destroy(self, request, *args, **kwargs):
         """Prevent deletion if stage has applications"""
@@ -56,10 +64,13 @@ class StageViewSet(viewsets.ModelViewSet):
         return super().destroy(request, *args, **kwargs)
 
 
-class ApplicationViewSet(viewsets.ModelViewSet):
+class ApplicationViewSet(CacheResponseMixin, viewsets.ModelViewSet):
     """ViewSet for Application CRUD operations"""
     queryset = Application.objects.select_related('stage', 'created_by').all()
     serializer_class = ApplicationSerializer
+    cache_prefix = 'applications'
+    cache_ttl = CACHE_TTL['applications']  # 5 minutes
+    cache_user_specific = True
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
@@ -71,10 +82,13 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         return qs.filter(created_by=self.request.user)
 
 
-class JobOfferViewSet(viewsets.ModelViewSet):
+class JobOfferViewSet(CacheResponseMixin, viewsets.ModelViewSet):
     """ViewSet for JobOffer CRUD operations"""
     queryset = JobOffer.objects.select_related('application', 'created_by').all()
     serializer_class = JobOfferSerializer
+    cache_prefix = 'job_offers'
+    cache_ttl = CACHE_TTL['job_offers']  # 5 minutes
+    cache_user_specific = True
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
@@ -86,10 +100,13 @@ class JobOfferViewSet(viewsets.ModelViewSet):
         return qs.filter(created_by=self.request.user)
 
 
-class AssessmentViewSet(viewsets.ModelViewSet):
+class AssessmentViewSet(CacheResponseMixin, viewsets.ModelViewSet):
     """ViewSet for Assessment CRUD operations"""
     queryset = Assessment.objects.select_related('created_by', 'application').all()
     serializer_class = AssessmentSerializer
+    cache_prefix = 'assessments'
+    cache_ttl = CACHE_TTL['assessments']  # 5 minutes
+    cache_user_specific = True
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
