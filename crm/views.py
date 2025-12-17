@@ -23,7 +23,7 @@ def register(request):
 
 class InteractionViewSet(viewsets.ModelViewSet):
     """ViewSet for Interaction CRUD operations"""
-    queryset = Interaction.objects.all()
+    queryset = Interaction.objects.select_related('application', 'created_by').all()
     serializer_class = InteractionSerializer
 
     def perform_create(self, serializer):
@@ -31,9 +31,10 @@ class InteractionViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         # Users can only see interactions they created or all if staff
+        qs = Interaction.objects.select_related('application', 'created_by')
         if self.request.user.is_staff:
-            return Interaction.objects.all()
-        return Interaction.objects.filter(created_by=self.request.user)
+            return qs.all()
+        return qs.filter(created_by=self.request.user)
 
 
 class StageViewSet(viewsets.ModelViewSet):
@@ -72,14 +73,14 @@ class ApplicationViewSet(viewsets.ModelViewSet):
 
 class JobOfferViewSet(viewsets.ModelViewSet):
     """ViewSet for JobOffer CRUD operations"""
-    queryset = JobOffer.objects.select_related('created_by').all()
+    queryset = JobOffer.objects.select_related('application', 'created_by').all()
     serializer_class = JobOfferSerializer
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
 
     def get_queryset(self):
-        qs = JobOffer.objects.select_related('created_by')
+        qs = JobOffer.objects.select_related('application', 'created_by')
         if self.request.user.is_staff:
             return qs.all()
         return qs.filter(created_by=self.request.user)
