@@ -2103,3 +2103,185 @@ class AIEmailAnalyzerTests(TestCase):
         self.assertEqual(call_args.kwargs['temperature'], 0.1)
         self.assertEqual(call_args.kwargs['max_tokens'], 500)
         self.assertIn('messages', call_args.kwargs)
+
+
+class EmailProcessorTests(TestCase):
+    """Tests for the EmailProcessor service (hybrid pattern + AI)"""
+    
+    def setUp(self):
+        """Set up test environment"""
+        from django.core.cache import cache
+        cache.clear()
+    
+    def test_uses_pattern_matching_for_high_confidence(self):
+        """Test that high-confidence pattern matches skip AI"""
+        from crm.services.email_processor import EmailProcessor
+        
+        email = {
+            'subject': 'Thank you for your application',
+            'body': 'We received your application to Google.',
+            'from': 'noreply@google.com'
+        }
+        
+        processor = EmailProcessor()
+        result = processor.process_email(email)
+        
+        self.assertEqual(result['source'], 'pattern')
+        self.assertGreater(result['confidence'], 0.7)
+        self.assertFalse(result.get('used_ai', False))
+        self.assertEqual(result['type'], 'application')
+    
+    @patch('crm.services.email_processor.AIEmailAnalyzer')
+    def test_uses_ai_for_low_confidence(self, mock_ai_class):
+        """Test that low-confidence emails use AI"""
+        from crm.services.email_processor import EmailProcessor
+        
+        # Mock AI analyzer to return high confidence result
+        mock_ai_instance = Mock()
+        mock_ai_instance.analyze_email.return_value = {
+            'type': 'application',
+            'confidence': 0.9,
+            'company_name': 'Google'
+        }
+        mock_ai_class.return_value = mock_ai_instance
+        
+        email = {
+            'subject': 'Hello',
+            'body': 'Unclear email content',
+            'from': 'unknown@company.com'
+        }
+        
+        processor = EmailProcessor()
+        result = processor.process_email(email)
+        
+        self.assertEqual(result['source'], 'ai')
+        self.assertTrue(result.get('used_ai', False))
+        self.assertEqual(result['type'], 'application')
+        self.assertGreater(result['confidence'], 0.7)
+        mock_ai_instance.analyze_email.assert_called_once()
+    
+    @patch('crm.services.email_processor.AIEmailAnalyzer')
+    def test_uses_pattern_when_more_confident_than_ai(self, mock_ai_class):
+        """Test that pattern result is used when it's more confident than AI"""
+        from crm.services.email_processor import EmailProcessor
+        
+        # Mock AI analyzer to return lower confidence than pattern
+        mock_ai_instance = Mock()
+        mock_ai_instance.analyze_email.return_value = {
+            'type': 'application',
+            'confidence': 0.5,  # Lower than pattern's 0.85
+            'company_name': 'Google'
+        }
+        mock_ai_class.return_value = mock_ai_instance
+        
+        email = {
+            'subject': 'Thank you for your application',
+            'body': 'We received your application.',
+            'from': 'noreply@google.com'
+        }
+        
+        processor = EmailProcessor()
+        result = processor.process_email(email)
+        
+        # Should use pattern result (higher confidence)
+        self.assertEqual(result['source'], 'pattern')
+        self.assertFalse(result.get('used_ai', False))
+        self.assertGreater(result['confidence'], 0.7)
+    
+    @patch('crm.services.email_processor.AIEmailAnalyzer')
+    def test_uses_ai_when_more_confident_than_pattern(self, mock_ai_class):
+        """Test that AI result is used when it's more confident than pattern"""
+        from crm.services.email_processor import EmailProcessor
+        
+        # Mock AI analyzer to return higher confidence than pattern
+        mock_ai_instance = Mock()
+        mock_ai_instance.analyze_email.return_value = {
+            'type': 'application',
+            'confidence': 0.95,  # Higher than pattern's 0.85
+            'company_name': 'Google'
+        }
+        mock_ai_class.return_value = mock_ai_instance
+        
+        email = {
+            'subject': 'Thank you for your application',
+            'body': 'We received your application.',
+            'from': 'noreply@google.com'
+        }
+        
+        processor = EmailProcessor()
+        result = processor.process_email(email)
+        
+        # Should use AI result (higher confidence)
+        self.assertEqual(result['source'], 'ai')
+        self.assertTrue(result.get('used_ai', False))
+        self.assertEqual(result['confidence'], 0.95)
+    
+    @patch('crm.services.email_processor.AIEmailAnalyzer')
+    def test_skips_ai_for_high_confidence_pattern_matches(self, mock_ai_class):
+        """Test that AI is not called for high-confidence pattern matches"""
+        from crm.services.email_processor import EmailProcessor
+        
+        mock_ai_instance = Mock()
+        mock_ai_class.return_value = mock_ai_instance
+        
+        email = {
+            'subject': 'Thank you for your application',
+            'body': 'We received your application to Google.',
+            'from': 'noreply@google.com'
+        }
+        
+        processor = EmailProcessor()
+        result = processor.process_email(email)
+        
+        # AI should not be called
+        mock_ai_instance.analyze_email.assert_not_called()
+        self.assertEqual(result['source'], 'pattern')
+        self.assertFalse(result.get('used_ai', False))
+    
+    def test_returns_combined_result_structure(self):
+        """Test that process_email returns correct structure"""
+        from crm.services.email_processor import EmailProcessor
+        
+        email = {
+            'subject': 'Thank you for your application',
+            'body': 'We received your application.',
+            'from': 'noreply@google.com'
+        }
+        
+        processor = EmailProcessor()
+        result = processor.process_email(email)
+        
+        # Check required keys
+        self.assertIn('type', result)
+        self.assertIn('confidence', result)
+        self.assertIn('data', result)
+        self.assertIn('source', result)
+        self.assertIn('used_ai', result)
+        
+        # Check source is either 'pattern' or 'ai'
+        self.assertIn(result['source'], ['pattern', 'ai'])
+        self.assertIsInstance(result['used_ai'], bool)
+    
+    @patch('crm.services.email_processor.AIEmailAnalyzer')
+    def test_handles_ai_errors_gracefully(self, mock_ai_class):
+        """Test that AI errors don't crash the processor"""
+        from crm.services.email_processor import EmailProcessor
+        
+        # Mock AI to raise an error
+        mock_ai_instance = Mock()
+        mock_ai_instance.analyze_email.side_effect = Exception("AI Error")
+        mock_ai_class.return_value = mock_ai_instance
+        
+        email = {
+            'subject': 'Hello',
+            'body': 'Unclear email content',
+            'from': 'unknown@company.com'
+        }
+        
+        processor = EmailProcessor()
+        # Should not crash, but may return pattern result or handle error
+        result = processor.process_email(email)
+        
+        # Should still return a result
+        self.assertIn('type', result)
+        self.assertIn('confidence', result)
