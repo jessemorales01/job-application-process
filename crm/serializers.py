@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import Interaction, Stage, Application, JobOffer, Assessment, EmailAccount
+from .models import Interaction, Stage, Application, JobOffer, Assessment, EmailAccount, AutoDetectedApplication
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -140,3 +140,20 @@ class EmailAccountSerializer(serializers.ModelSerializer):
                 })
         
         return data
+
+
+class AutoDetectedApplicationSerializer(serializers.ModelSerializer):
+    """Serializer for AutoDetectedApplication model"""
+    email_account_email = serializers.CharField(source='email_account.email', read_only=True)
+    merged_application_id = serializers.IntegerField(source='merged_into_application.id', read_only=True, allow_null=True)
+    merged_application_company = serializers.CharField(source='merged_into_application.company_name', read_only=True, allow_null=True)
+
+    class Meta:
+        model = AutoDetectedApplication
+        fields = (
+            'id', 'email_account', 'email_account_email', 'email_message_id',
+            'company_name', 'position', 'where_applied', 'confidence_score',
+            'status', 'detected_at', 'reviewed_at',
+            'merged_into_application', 'merged_application_id', 'merged_application_company'
+        )
+        read_only_fields = ('detected_at', 'reviewed_at', 'merged_into_application')

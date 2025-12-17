@@ -14,6 +14,8 @@ CACHE_PREFIXES = {
     'job_offers': 'job_offers',
     'assessments': 'assessments',
     'interactions': 'interactions',
+    'email_accounts': 'email_accounts',
+    'auto_detected_applications': 'auto_detected_applications',
     'user_apps': 'user_apps',
     'user_job_offers': 'user_job_offers',
     'user_assessments': 'user_assessments',
@@ -27,6 +29,8 @@ CACHE_TTL = {
     'job_offers': 300,  # 5 minutes
     'assessments': 300,  # 5 minutes
     'interactions': 300,  # 5 minutes
+    'email_accounts': 300,  # 5 minutes
+    'auto_detected_applications': 300,  # 5 minutes
     'dashboard_stats': 60,  # 1 minute - stats change more frequently
 }
 
@@ -179,4 +183,25 @@ def invalidate_interaction_cache(sender, instance, **kwargs):
         invalidate_user_cache(instance.created_by.id, 'interactions')
     if instance.application and instance.application.created_by:
         invalidate_user_cache(instance.application.created_by.id, 'applications')
+
+
+@receiver(post_save, sender='crm.EmailAccount')
+@receiver(post_delete, sender='crm.EmailAccount')
+def invalidate_email_account_cache(sender, instance, **kwargs):
+    """Invalidate email account cache when email accounts are created/updated/deleted"""
+    invalidate_model_cache('email_accounts')
+    if instance.user:
+        invalidate_user_cache(instance.user.id, 'email_accounts')
+
+
+@receiver(post_save, sender='crm.AutoDetectedApplication')
+@receiver(post_delete, sender='crm.AutoDetectedApplication')
+def invalidate_auto_detected_cache(sender, instance, **kwargs):
+    """Invalidate auto-detected application cache when detected apps are created/updated/deleted"""
+    invalidate_model_cache('auto_detected_applications')
+    if instance.email_account and instance.email_account.user:
+        invalidate_user_cache(instance.email_account.user.id, 'auto_detected_applications')
+    # Also invalidate applications cache if merged
+    if instance.merged_into_application and instance.merged_into_application.created_by:
+        invalidate_user_cache(instance.merged_into_application.created_by.id, 'applications')
 

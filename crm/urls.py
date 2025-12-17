@@ -3,7 +3,8 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     register,
     InteractionViewSet, StageViewSet, ApplicationViewSet, JobOfferViewSet, AssessmentViewSet,
-    EmailAccountViewSet, initiate_oauth_flow, oauth_callback, refresh_token
+    EmailAccountViewSet, AutoDetectedApplicationViewSet,
+    initiate_oauth_flow, oauth_callback, refresh_token
 )
 
 router = DefaultRouter()
@@ -13,6 +14,7 @@ router.register(r'applications', ApplicationViewSet)
 router.register(r'job-offers', JobOfferViewSet)
 router.register(r'assessments', AssessmentViewSet)
 router.register(r'email-accounts', EmailAccountViewSet)
+router.register(r'auto-detected-applications', AutoDetectedApplicationViewSet)
 
 urlpatterns = [
     path('register/', register, name='register'),

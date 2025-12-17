@@ -1,14 +1,14 @@
 from rest_framework import viewsets, status, permissions
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from django.contrib.auth.models import User
 from datetime import datetime, timedelta
-from .models import Interaction, Stage, Application, JobOffer, Assessment, EmailAccount
+from .models import Interaction, Stage, Application, JobOffer, Assessment, EmailAccount, AutoDetectedApplication
 from .serializers import (
     UserSerializer,
     InteractionSerializer, StageSerializer, ApplicationSerializer, JobOfferSerializer, AssessmentSerializer,
-    EmailAccountSerializer
+    EmailAccountSerializer, AutoDetectedApplicationSerializer
 )
 from .mixins import CacheResponseMixin
 from .cache_utils import CACHE_TTL
@@ -308,4 +308,161 @@ def refresh_token(request, pk):
             {'error': f'Failed to refresh token: {str(e)}'},
             status=status.HTTP_400_BAD_REQUEST
         )
+
+
+class AutoDetectedApplicationViewSet(CacheResponseMixin, viewsets.ModelViewSet):
+    """ViewSet for AutoDetectedApplication CRUD operations"""
+    queryset = AutoDetectedApplication.objects.select_related('email_account', 'email_account__user', 'merged_into_application').all()
+    serializer_class = AutoDetectedApplicationSerializer
+    cache_prefix = 'auto_detected_applications'
+    cache_ttl = CACHE_TTL.get('auto_detected_applications', 300)  # 5 minutes default
+    cache_user_specific = True
+
+    def get_queryset(self):
+        """Users can only see their own auto-detected applications"""
+        qs = AutoDetectedApplication.objects.select_related(
+            'email_account', 'email_account__user', 'merged_into_application'
+        )
+        
+        if self.request.user.is_staff:
+            return qs.all()
+        
+        # Filter by user's email accounts
+        user_email_accounts = EmailAccount.objects.filter(user=self.request.user).values_list('id', flat=True)
+        qs = qs.filter(email_account__in=user_email_accounts)
+        
+        # Filter by status if provided
+        status_filter = self.request.query_params.get('status', None)
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        
+        return qs
+    
+    @action(detail=True, methods=['post'])
+    def accept(self, request, pk=None):
+        """Accept detected application and create Application"""
+        from django.utils import timezone
+        
+        detected_app = self.get_object()
+        
+        # Check if already reviewed
+        if detected_app.status != 'pending':
+            return Response(
+                {'error': 'This detected application has already been reviewed.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get the first stage (for auto-assignment)
+        first_stage = Stage.objects.order_by('order').first()
+        if not first_stage:
+            return Response(
+                {'error': 'No stages exist. Please create a stage first.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create Application from detected item
+        application_data = {
+            'company_name': detected_app.company_name,
+            'position': detected_app.position or '',
+            'where_applied': detected_app.where_applied or '',
+            'stage': first_stage,
+            'created_by': request.user
+        }
+        
+        # Allow custom fields to be overridden
+        if 'salary_range' in request.data:
+            application_data['salary_range'] = request.data['salary_range']
+        if 'stack' in request.data:
+            application_data['stack'] = request.data['stack']
+        if 'email' in request.data:
+            application_data['email'] = request.data['email']
+        if 'phone_number' in request.data:
+            application_data['phone_number'] = request.data['phone_number']
+        if 'notes' in request.data:
+            application_data['notes'] = request.data['notes']
+        
+        application = Application.objects.create(**application_data)
+        
+        # Update detected application
+        detected_app.status = 'accepted'
+        detected_app.merged_into_application = application
+        detected_app.reviewed_at = timezone.now()
+        detected_app.save()
+        
+        # Serialize response
+        detected_serializer = self.get_serializer(detected_app)
+        application_serializer = ApplicationSerializer(application)
+        
+        return Response({
+            'application': application_serializer.data
+        }, status=status.HTTP_201_CREATED)
+    
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        """Reject detected application"""
+        from django.utils import timezone
+        
+        detected_app = self.get_object()
+        
+        # Check if already reviewed
+        if detected_app.status != 'pending':
+            return Response(
+                {'error': 'This detected application has already been reviewed.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Update status
+        detected_app.status = 'rejected'
+        detected_app.reviewed_at = timezone.now()
+        detected_app.save()
+        
+        serializer = self.get_serializer(detected_app)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    @action(detail=True, methods=['post'])
+    def merge(self, request, pk=None):
+        """Merge detected application with existing Application"""
+        from django.utils import timezone
+        
+        detected_app = self.get_object()
+        
+        # Check if already reviewed
+        if detected_app.status != 'pending':
+            return Response(
+                {'error': 'This detected application has already been reviewed.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate application_id
+        application_id = request.data.get('application_id')
+        if not application_id:
+            return Response(
+                {'application_id': 'This field is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get application and verify user owns it
+        try:
+            application = Application.objects.select_related('created_by').get(id=application_id)
+            
+            # Check if user owns this application (unless staff)
+            if not request.user.is_staff and application.created_by != request.user:
+                return Response(
+                    {'detail': 'Not found.'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        except Application.DoesNotExist:
+            return Response(
+                {'application_id': 'Application not found.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Update detected application
+        detected_app.status = 'merged'
+        detected_app.merged_into_application = application
+        detected_app.reviewed_at = timezone.now()
+        detected_app.save()
+        
+        serializer = self.get_serializer(detected_app)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
