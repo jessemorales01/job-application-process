@@ -5,6 +5,7 @@ import Dashboard from '../views/Dashboard.vue'
 import JobOffers from '../views/JobOffers.vue'
 import Applications from '../views/Applications.vue'
 import Activities from '../views/Activities.vue'
+import Settings from '../views/Settings.vue'
 
 const routes = [
   {
@@ -45,6 +46,12 @@ const routes = [
     path: '/applications',
     name: 'Applications',
     component: Applications,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/settings',
+    name: 'Settings',
+    component: Settings,
     meta: { requiresAuth: true }
   }
 ]

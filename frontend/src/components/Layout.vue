@@ -14,6 +14,7 @@
         <v-list-item to="/job-offers" prepend-icon="mdi-briefcase-check" title="Job Offers"></v-list-item>
         <v-list-item to="/activities" prepend-icon="mdi-clipboard-text-multiple" title="Activities"></v-list-item>
         <v-list-item to="/applications" prepend-icon="mdi-briefcase" title="Applications"></v-list-item>
+        <v-list-item to="/settings" prepend-icon="mdi-cog" title="Settings"></v-list-item>
       </v-list>
     </v-navigation-drawer>
 
