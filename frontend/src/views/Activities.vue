@@ -1,5 +1,16 @@
 <template>
   <Layout title="Activities">
+    <ErrorSnackbar
+      v-model="showError"
+      :message="errorMessage"
+      type="error"
+      :multiline="true"
+    />
+    <ErrorSnackbar
+      v-model="showSuccess"
+      :message="successMessage"
+      type="success"
+    />
     <v-card>
       <v-card-title>
         Activities Management
@@ -195,12 +206,15 @@
 
 <script>
 import Layout from '../components/Layout.vue'
+import ErrorSnackbar from '../components/ErrorSnackbar.vue'
 import api from '../services/api'
+import { formatErrorMessage } from '../utils/errorHandler'
 
 export default {
   name: 'Activities',
   components: {
-    Layout
+    Layout,
+    ErrorSnackbar
   },
   data() {
     return {
@@ -213,6 +227,10 @@ export default {
       interactionDialog: false,
       assessmentEditMode: false,
       interactionEditMode: false,
+      showError: false,
+      errorMessage: '',
+      showSuccess: false,
+      successMessage: '',
       statusOptions: [
         { title: 'Pending', value: 'pending' },
         { title: 'In Progress', value: 'in_progress' },
@@ -336,14 +354,22 @@ export default {
     ])
   },
   methods: {
+    showErrorNotification(message) {
+      this.errorMessage = message
+      this.showError = true
+    },
+    showSuccessNotification(message) {
+      this.successMessage = message
+      this.showSuccess = true
+    },
     async loadAssessments() {
       this.loading = true
       try {
         const response = await api.get('/assessments/')
         this.assessments = response.data
       } catch (error) {
-        console.error('Error loading assessments:', error)
-        alert('Failed to load assessments. Please refresh the page.')
+        const message = formatErrorMessage(error) || 'Failed to load assessments. Please refresh the page.'
+        this.showErrorNotification(message)
       } finally {
         this.loading = false
       }
@@ -353,8 +379,8 @@ export default {
         const response = await api.get('/interactions/')
         this.interactions = response.data
       } catch (error) {
-        console.error('Error loading interactions:', error)
-        alert('Failed to load interactions. Please refresh the page.')
+        const message = formatErrorMessage(error) || 'Failed to load interactions. Please refresh the page.'
+        this.showErrorNotification(message)
       }
     },
     async loadApplications() {
@@ -365,7 +391,8 @@ export default {
           title: `${app.company_name}${app.position ? ` - ${app.position}` : ''}`
         }))
       } catch (error) {
-        console.error('Error loading applications:', error)
+        const message = formatErrorMessage(error) || 'Failed to load applications.'
+        this.showErrorNotification(message)
       }
     },
     openAssessmentDialog(assessment = null) {
@@ -428,37 +455,32 @@ export default {
         
         if (this.assessmentEditMode) {
           await api.put(`/assessments/${formData.id}/`, formData)
+          this.showSuccessNotification('Assessment updated successfully!')
         } else {
           await api.post('/assessments/', formData)
+          this.showSuccessNotification('Assessment created successfully!')
         }
         this.assessmentDialog = false
         await this.loadAssessments()
       } catch (error) {
-        console.error('Error saving assessment:', error)
-        // Log the full error response for debugging
-        if (error.response && error.response.data) {
-          console.error('Validation errors:', error.response.data)
-          const errorMsg = error.response.data.detail || 
-            (typeof error.response.data === 'object' ? JSON.stringify(error.response.data) : error.response.data) ||
-            'Failed to save assessment. Please check the form fields.'
-          alert(errorMsg)
-        } else {
-          alert('Failed to save assessment. Please try again.')
-        }
+        const message = formatErrorMessage(error) || 'Failed to save assessment. Please check the form fields and try again.'
+        this.showErrorNotification(message)
       }
     },
     async saveInteraction() {
       try {
         if (this.interactionEditMode) {
           await api.put(`/interactions/${this.interactionForm.id}/`, this.interactionForm)
+          this.showSuccessNotification('Interaction updated successfully!')
         } else {
           await api.post('/interactions/', this.interactionForm)
+          this.showSuccessNotification('Interaction created successfully!')
         }
         this.interactionDialog = false
         await this.loadInteractions()
       } catch (error) {
-        console.error('Error saving interaction:', error)
-        alert('Failed to save interaction. Please try again.')
+        const message = formatErrorMessage(error) || 'Failed to save interaction. Please try again.'
+        this.showErrorNotification(message)
       }
     },
     editItem(item) {
@@ -477,14 +499,15 @@ export default {
       if (confirm(`Are you sure you want to delete this ${itemName.toLowerCase()}?`)) {
         try {
           await api.delete(`/${itemType}s/${item.originalId}/`)
+          this.showSuccessNotification(`${itemName} deleted successfully!`)
           if (itemType === 'assessment') {
             await this.loadAssessments()
           } else {
             await this.loadInteractions()
           }
         } catch (error) {
-          console.error(`Error deleting ${itemType}:`, error)
-          alert(`Failed to delete ${itemName.toLowerCase()}. Please try again.`)
+          const message = formatErrorMessage(error) || `Failed to delete ${itemName.toLowerCase()}. Please try again.`
+          this.showErrorNotification(message)
         }
       }
     },

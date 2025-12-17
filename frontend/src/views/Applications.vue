@@ -1,5 +1,16 @@
 <template>
   <Layout title="Applications">
+    <ErrorSnackbar
+      v-model="showError"
+      :message="errorMessage"
+      type="error"
+      :multiline="true"
+    />
+    <ErrorSnackbar
+      v-model="showSuccess"
+      :message="successMessage"
+      type="success"
+    />
     <v-card>
       <v-card-title>
         Applications Management
@@ -184,13 +195,16 @@
 
 <script>
 import Layout from '../components/Layout.vue'
+import ErrorSnackbar from '../components/ErrorSnackbar.vue'
 import api from '../services/api'
 import draggable from 'vuedraggable'
+import { formatErrorMessage } from '../utils/errorHandler'
 
 export default {
   name: 'Applications',
   components: {
     Layout,
+    ErrorSnackbar,
     draggable
   },
   data() {
@@ -202,6 +216,10 @@ export default {
       loading: false,
       dialog: false,
       editMode: false,
+      showError: false,
+      errorMessage: '',
+      showSuccess: false,
+      successMessage: '',
       form: {
         company_name: '',
         position: '',
@@ -235,55 +253,21 @@ export default {
     ])
   },
   methods: {
-    getErrorMessage(error) {
-      if (error.response?.data) {
-        const data = error.response.data
-        
-        // Check if response is HTML (error page) instead of JSON
-        if (typeof data === 'string' && data.trim().startsWith('<!')) {
-          return 'Server returned an error page. Please check the backend logs or try refreshing the page.'
-        }
-        
-        // Handle JSON error responses
-        if (typeof data === 'object') {
-          if (data.error) {
-            return data.error
-          }
-          
-          if (data.non_field_errors) {
-            return Array.isArray(data.non_field_errors) 
-              ? data.non_field_errors.join('\n')
-              : data.non_field_errors
-          }
-          
-          const fieldErrors = Object.entries(data)
-            .map(([field, messages]) => {
-              const fieldName = field.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
-              const errorList = Array.isArray(messages) ? messages : [messages]
-              return `${fieldName}: ${errorList.join(', ')}`
-            })
-            .join('\n')
-          
-          if (fieldErrors) {
-            return fieldErrors
-          }
-        }
-      }
-      
-      // Handle network errors or other issues
-      if (error.message) {
-        return error.message
-      }
-      
-      return null
+    showErrorNotification(message) {
+      this.errorMessage = message
+      this.showError = true
+    },
+    showSuccessNotification(message) {
+      this.successMessage = message
+      this.showSuccess = true
     },
     async loadStages() {
       try {
         const response = await api.get('/stages/')
         this.stages = response.data
       } catch (error) {
-        const message = this.getErrorMessage(error) || 'Failed to load stages. Please refresh the page.'
-        alert(message)
+        const message = formatErrorMessage(error) || 'Failed to load stages. Please refresh the page.'
+        this.showErrorNotification(message)
       }
     },
     async loadApplications() {
@@ -292,8 +276,8 @@ export default {
         const response = await api.get('/applications/')
         this.applications = response.data
       } catch (error) {
-        const message = this.getErrorMessage(error) || 'Failed to load applications. Please refresh the page.'
-        alert(message)
+        const message = formatErrorMessage(error) || 'Failed to load applications. Please refresh the page.'
+        this.showErrorNotification(message)
       } finally {
         this.loading = false
       }
@@ -332,24 +316,27 @@ export default {
       try {
         if (this.editMode) {
           await api.put(`/applications/${this.form.id}/`, this.form)
+          this.showSuccessNotification('Application updated successfully!')
         } else {
           await api.post('/applications/', this.form)
+          this.showSuccessNotification('Application created successfully!')
         }
         this.dialog = false
         await this.loadApplications()
       } catch (error) {
-        const message = this.getErrorMessage(error) || 'Failed to save application. Please try again.'
-        alert(message)
+        const message = formatErrorMessage(error) || 'Failed to save application. Please try again.'
+        this.showErrorNotification(message)
       }
     },
     async deleteApplication(id) {
       if (confirm('Are you sure you want to delete this application?')) {
         try {
           await api.delete(`/applications/${id}/`)
+          this.showSuccessNotification('Application deleted successfully!')
           await this.loadApplications()
         } catch (error) {
-          const message = this.getErrorMessage(error) || 'Failed to delete application. Please try again.'
-          alert(message)
+          const message = formatErrorMessage(error) || 'Failed to delete application. Please try again.'
+          this.showErrorNotification(message)
         }
       }
     },
@@ -360,20 +347,22 @@ export default {
           name: 'New Stage',
           order: maxOrder + 1
         })
+        this.showSuccessNotification('Stage added successfully!')
         await this.loadStages()
       } catch (error) {
-        const message = this.getErrorMessage(error) || 'Failed to add stage. Please try again.'
-        alert(message)
+        const message = formatErrorMessage(error) || 'Failed to add stage. Please try again.'
+        this.showErrorNotification(message)
       }
     },
     async deleteStage(id) {
       if (confirm('Are you sure you want to delete this stage?')) {
         try {
           await api.delete(`/stages/${id}/`)
+          this.showSuccessNotification('Stage deleted successfully!')
           await this.loadStages()
         } catch (error) {
-          const message = this.getErrorMessage(error) || 'Failed to delete stage. Please try again.'
-          alert(message)
+          const message = formatErrorMessage(error) || 'Failed to delete stage. Please try again.'
+          this.showErrorNotification(message)
         }
       }
     },
@@ -388,9 +377,10 @@ export default {
           if (application) {
             application.stage = newStageId
           }
+          this.showSuccessNotification('Application moved successfully!')
         } catch (error) {
-          const message = this.getErrorMessage(error) || 'Failed to move application. Please try again.'
-          alert(message)
+          const message = formatErrorMessage(error) || 'Failed to move application. Please try again.'
+          this.showErrorNotification(message)
           await this.loadApplications()
         }
       }
@@ -402,10 +392,11 @@ export default {
       }
       try {
         await api.patch(`/stages/${stageId}/`, { name: this.editingStageName })
+        this.showSuccessNotification('Stage name updated successfully!')
         await this.loadStages()
       } catch (error) {
-        const message = this.getErrorMessage(error) || 'Failed to update stage name. Please try again.'
-        alert(message)
+        const message = formatErrorMessage(error) || 'Failed to update stage name. Please try again.'
+        this.showErrorNotification(message)
       } finally {
         this.editingStageId = null
         this.editingStageName = ''

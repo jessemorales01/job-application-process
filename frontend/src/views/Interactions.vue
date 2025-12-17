@@ -1,5 +1,16 @@
 <template>
   <Layout title="Interactions">
+    <ErrorSnackbar
+      v-model="showError"
+      :message="errorMessage"
+      type="error"
+      :multiline="true"
+    />
+    <ErrorSnackbar
+      v-model="showSuccess"
+      :message="successMessage"
+      type="success"
+    />
     <v-card>
       <v-card-title>
         Interactions Management
@@ -82,12 +93,15 @@
 
 <script>
 import Layout from '../components/Layout.vue'
+import ErrorSnackbar from '../components/ErrorSnackbar.vue'
 import api from '../services/api'
+import { formatErrorMessage } from '../utils/errorHandler'
 
 export default {
   name: 'Interactions',
   components: {
-    Layout
+    Layout,
+    ErrorSnackbar
   },
   data() {
     return {
@@ -95,6 +109,10 @@ export default {
       loading: false,
       dialog: false,
       editMode: false,
+      showError: false,
+      errorMessage: '',
+      showSuccess: false,
+      successMessage: '',
       interactionTypes: [
         { title: 'Email', value: 'email' },
         { title: 'Phone Call', value: 'phone' },
@@ -130,13 +148,22 @@ export default {
     await this.loadApplications()
   },
   methods: {
+    showErrorNotification(message) {
+      this.errorMessage = message
+      this.showError = true
+    },
+    showSuccessNotification(message) {
+      this.successMessage = message
+      this.showSuccess = true
+    },
     async loadInteractions() {
       this.loading = true
       try {
         const response = await api.get('/interactions/')
         this.interactions = response.data
       } catch (error) {
-        console.error('Error loading interactions:', error)
+        const message = formatErrorMessage(error) || 'Failed to load interactions. Please refresh the page.'
+        this.showErrorNotification(message)
       } finally {
         this.loading = false
       }
@@ -146,7 +173,8 @@ export default {
         const response = await api.get('/applications/')
         this.applications = response.data
       } catch (error) {
-        console.error('Error loading applications:', error)
+        const message = formatErrorMessage(error) || 'Failed to load applications.'
+        this.showErrorNotification(message)
       }
     },
     openDialog(interaction = null) {
@@ -174,22 +202,27 @@ export default {
       try {
         if (this.editMode) {
           await api.put(`/interactions/${this.form.id}/`, this.form)
+          this.showSuccessNotification('Interaction updated successfully!')
         } else {
           await api.post('/interactions/', this.form)
+          this.showSuccessNotification('Interaction created successfully!')
         }
         this.dialog = false
         await this.loadInteractions()
       } catch (error) {
-        console.error('Error saving interaction:', error)
+        const message = formatErrorMessage(error) || 'Failed to save interaction. Please try again.'
+        this.showErrorNotification(message)
       }
     },
     async deleteInteraction(id) {
       if (confirm('Are you sure you want to delete this interaction?')) {
         try {
           await api.delete(`/interactions/${id}/`)
+          this.showSuccessNotification('Interaction deleted successfully!')
           await this.loadInteractions()
         } catch (error) {
-          console.error('Error deleting interaction:', error)
+          const message = formatErrorMessage(error) || 'Failed to delete interaction. Please try again.'
+          this.showErrorNotification(message)
         }
       }
     }

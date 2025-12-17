@@ -75,7 +75,15 @@ export default {
         localStorage.setItem("refresh_token", response.data.refresh);
         this.$router.push("/dashboard");
       } catch (err) {
-        this.error = "Invalid username or password";
+        if (err.response?.status === 401) {
+          this.error = "Invalid username or password. Please try again.";
+        } else if (err.response?.data?.detail) {
+          this.error = err.response.data.detail;
+        } else if (err.message === 'Network Error') {
+          this.error = "Unable to connect to the server. Please check your internet connection.";
+        } else {
+          this.error = "An error occurred during login. Please try again.";
+        }
       } finally {
         this.loading = false;
       }

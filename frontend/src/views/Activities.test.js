@@ -589,5 +589,259 @@ describe('Activities.vue', () => {
     expect(activities[1].type).toBe('Interaction')
     expect(activities[1].interaction_date).toBe('2024-12-20T10:00:00Z')
   })
+
+  describe('Error Handling', () => {
+    it('displays error snackbar when loading assessments fails', async () => {
+      const error = {
+        response: {
+          status: 500,
+          data: { detail: 'Server error' }
+        }
+      }
+      api.get = vi.fn((url) => {
+        if (url === '/assessments/') return Promise.reject(error)
+        if (url === '/interactions/') return Promise.resolve({ data: [] })
+        if (url === '/applications/') return Promise.resolve({ data: [] })
+        return Promise.reject(new Error('Unknown URL'))
+      })
+
+      wrapper = mount(Activities, {
+        global: {
+          stubs: {
+            Layout: true,
+            ErrorSnackbar: true,
+            'v-card': true,
+            'v-card-title': true,
+            'v-card-text': true,
+            'v-btn': true,
+            'v-icon': true,
+            'v-spacer': true,
+            'v-select': true,
+            'v-data-table': true
+          }
+        }
+      })
+
+      await wrapper.vm.loadAssessments()
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.vm.showError).toBe(true)
+      expect(wrapper.vm.errorMessage).toContain('server error')
+    })
+
+    it('displays error snackbar when saving assessment fails with validation errors', async () => {
+      const error = {
+        response: {
+          status: 400,
+          data: {
+            deadline: ['This field is required.'],
+            application: ['This field is required.']
+          }
+        }
+      }
+      api.post = vi.fn(() => Promise.reject(error))
+
+      wrapper = mount(Activities, {
+        data() {
+          return {
+            assessmentForm: {
+              application: null,
+              deadline: '',
+              website_url: '',
+              recruiter_contact_name: '',
+              recruiter_contact_email: '',
+              recruiter_contact_phone: '',
+              status: 'pending',
+              notes: ''
+            }
+          }
+        },
+        global: {
+          stubs: {
+            Layout: true,
+            ErrorSnackbar: true,
+            'v-card': true,
+            'v-card-title': true,
+            'v-card-text': true,
+            'v-btn': true,
+            'v-icon': true,
+            'v-spacer': true
+          }
+        }
+      })
+
+      await wrapper.vm.saveAssessment()
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.vm.showError).toBe(true)
+      expect(wrapper.vm.errorMessage).toContain('Deadline')
+      expect(wrapper.vm.errorMessage).toContain('Application')
+    })
+
+    it('displays success snackbar when assessment is saved successfully', async () => {
+      api.post = vi.fn(() => Promise.resolve({ data: { id: 1 } }))
+      api.get = vi.fn(() => Promise.resolve({ data: [] }))
+
+      wrapper = mount(Activities, {
+        data() {
+          return {
+            assessmentForm: {
+              application: 1,
+              deadline: '2024-12-31',
+              website_url: 'https://example.com',
+              recruiter_contact_name: 'John Doe',
+              recruiter_contact_email: 'john@example.com',
+              recruiter_contact_phone: '555-1234',
+              status: 'pending',
+              notes: 'Test assessment'
+            }
+          }
+        },
+        global: {
+          stubs: {
+            Layout: true,
+            ErrorSnackbar: true,
+            'v-card': true,
+            'v-card-title': true,
+            'v-card-text': true,
+            'v-btn': true,
+            'v-icon': true,
+            'v-spacer': true
+          }
+        }
+      })
+
+      await wrapper.vm.saveAssessment()
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.vm.showSuccess).toBe(true)
+      expect(wrapper.vm.successMessage).toContain('created successfully')
+    })
+
+    it('displays error snackbar when saving interaction fails', async () => {
+      const error = {
+        response: {
+          status: 422,
+          data: {
+            interaction_date: ['This date is in the past.']
+          }
+        }
+      }
+      api.post = vi.fn(() => Promise.reject(error))
+
+      wrapper = mount(Activities, {
+        data() {
+          return {
+            interactionForm: {
+              application: null,
+              interaction_type: 'email',
+              direction: 'outbound',
+              subject: 'Test',
+              notes: 'Test notes',
+              interaction_date: '2020-01-01T10:00'
+            }
+          }
+        },
+        global: {
+          stubs: {
+            Layout: true,
+            ErrorSnackbar: true,
+            'v-card': true,
+            'v-card-title': true,
+            'v-card-text': true,
+            'v-btn': true,
+            'v-icon': true,
+            'v-spacer': true
+          }
+        }
+      })
+
+      await wrapper.vm.saveInteraction()
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.vm.showError).toBe(true)
+      expect(wrapper.vm.errorMessage).toContain('Interaction Date')
+    })
+
+    it('displays error snackbar when deleting assessment fails', async () => {
+      const error = {
+        response: {
+          status: 404,
+          data: { detail: 'Assessment not found' }
+        }
+      }
+      api.delete = vi.fn(() => Promise.reject(error))
+
+      // Mock confirm to return true
+      global.confirm = vi.fn(() => true)
+
+      wrapper = mount(Activities, {
+        data() {
+          return {
+            assessments: mockAssessments,
+            interactions: []
+          }
+        },
+        global: {
+          stubs: {
+            Layout: true,
+            ErrorSnackbar: true,
+            'v-card': true,
+            'v-card-title': true,
+            'v-card-text': true,
+            'v-btn': true,
+            'v-icon': true,
+            'v-spacer': true
+          }
+        }
+      })
+
+      const item = {
+        originalType: 'assessment',
+        originalId: 999 // Non-existent ID
+      }
+
+      await wrapper.vm.deleteItem(item)
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.vm.showError).toBe(true)
+      expect(wrapper.vm.errorMessage).toContain('not found')
+    })
+
+    it('handles network errors when loading data', async () => {
+      const error = {
+        message: 'Network Error'
+      }
+      api.get = vi.fn((url) => {
+        if (url === '/assessments/') return Promise.reject(error)
+        if (url === '/interactions/') return Promise.resolve({ data: [] })
+        if (url === '/applications/') return Promise.resolve({ data: [] })
+        return Promise.reject(new Error('Unknown URL'))
+      })
+
+      wrapper = mount(Activities, {
+        global: {
+          stubs: {
+            Layout: true,
+            ErrorSnackbar: true,
+            'v-card': true,
+            'v-card-title': true,
+            'v-card-text': true,
+            'v-btn': true,
+            'v-icon': true,
+            'v-spacer': true,
+            'v-select': true,
+            'v-data-table': true
+          }
+        }
+      })
+
+      await wrapper.vm.loadAssessments()
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.vm.showError).toBe(true)
+      expect(wrapper.vm.errorMessage).toContain('connect to the server')
+    })
+  })
 })
 

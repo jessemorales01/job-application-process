@@ -1,5 +1,16 @@
 <template>
   <Layout title="Job Offers">
+    <ErrorSnackbar
+      v-model="showError"
+      :message="errorMessage"
+      type="error"
+      :multiline="true"
+    />
+    <ErrorSnackbar
+      v-model="showSuccess"
+      :message="successMessage"
+      type="success"
+    />
     <v-card>
       <v-card-title>
         Job Offers Management
@@ -119,12 +130,15 @@
 
 <script>
 import Layout from '../components/Layout.vue'
+import ErrorSnackbar from '../components/ErrorSnackbar.vue'
 import api from '../services/api'
+import { formatErrorMessage } from '../utils/errorHandler'
 
 export default {
   name: 'JobOffers',
   components: {
-    Layout
+    Layout,
+    ErrorSnackbar
   },
   data() {
     return {
@@ -132,6 +146,10 @@ export default {
       loading: false,
       dialog: false,
       editMode: false,
+      showError: false,
+      errorMessage: '',
+      showSuccess: false,
+      successMessage: '',
       statusOptions: [
         { title: 'Pending', value: 'pending' },
         { title: 'Accepted', value: 'accepted' },
@@ -170,13 +188,22 @@ export default {
     ])
   },
   methods: {
+    showErrorNotification(message) {
+      this.errorMessage = message
+      this.showError = true
+    },
+    showSuccessNotification(message) {
+      this.successMessage = message
+      this.showSuccess = true
+    },
     async loadJobOffers() {
       this.loading = true
       try {
         const response = await api.get('/job-offers/')
         this.jobOffers = response.data
       } catch (error) {
-        console.error('Error loading job offers:', error)
+        const message = formatErrorMessage(error) || 'Failed to load job offers. Please refresh the page.'
+        this.showErrorNotification(message)
       } finally {
         this.loading = false
       }
@@ -189,7 +216,8 @@ export default {
           title: `${app.company_name}${app.position ? ` - ${app.position}` : ''}`
         }))
       } catch (error) {
-        console.error('Error loading applications:', error)
+        const message = formatErrorMessage(error) || 'Failed to load applications.'
+        this.showErrorNotification(message)
       }
     },
     onApplicationSelected(applicationId) {
@@ -237,22 +265,27 @@ export default {
       try {
         if (this.editMode) {
           await api.put(`/job-offers/${this.form.id}/`, this.form)
+          this.showSuccessNotification('Job offer updated successfully!')
         } else {
           await api.post('/job-offers/', this.form)
+          this.showSuccessNotification('Job offer created successfully!')
         }
         this.dialog = false
         await this.loadJobOffers()
       } catch (error) {
-        console.error('Error saving job offer:', error)
+        const message = formatErrorMessage(error) || 'Failed to save job offer. Please try again.'
+        this.showErrorNotification(message)
       }
     },
     async deleteJobOffer(id) {
       if (confirm('Are you sure you want to delete this job offer?')) {
         try {
           await api.delete(`/job-offers/${id}/`)
+          this.showSuccessNotification('Job offer deleted successfully!')
           await this.loadJobOffers()
         } catch (error) {
-          console.error('Error deleting job offer:', error)
+          const message = formatErrorMessage(error) || 'Failed to delete job offer. Please try again.'
+          this.showErrorNotification(message)
         }
       }
     },

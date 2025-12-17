@@ -1,5 +1,10 @@
 <template>
   <v-app>
+    <ErrorSnackbar
+      v-model="showError"
+      :message="errorMessage"
+      type="error"
+    />
     <v-app-bar color="primary" dark>
       <v-app-bar-title>Job Process Tracker</v-app-bar-title>
       <v-spacer></v-spacer>
@@ -60,23 +65,34 @@
 </template>
 
 <script>
+import ErrorSnackbar from '../components/ErrorSnackbar.vue'
 import api from '../services/api'
+import { formatErrorMessage } from '../utils/errorHandler'
 
 export default {
   name: 'Dashboard',
+  components: {
+    ErrorSnackbar
+  },
   data() {
     return {
       stats: {
         jobOffers: 0,
         activities: 0,
         applications: 0
-      }
+      },
+      showError: false,
+      errorMessage: ''
     }
   },
   async mounted() {
     await this.loadStats()
   },
   methods: {
+    showErrorNotification(message) {
+      this.errorMessage = message
+      this.showError = true
+    },
     async loadStats() {
       try {
         const [jobOffers, assessments, interactions, applications] = await Promise.all([
@@ -89,7 +105,8 @@ export default {
         this.stats.activities = assessments.data.length + interactions.data.length
         this.stats.applications = applications.data.length
       } catch (error) {
-        console.error('Error loading stats:', error)
+        const message = formatErrorMessage(error) || 'Failed to load dashboard statistics. Please refresh the page.'
+        this.showErrorNotification(message)
       }
     },
     logout() {
