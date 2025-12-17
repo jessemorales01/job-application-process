@@ -2766,3 +2766,381 @@ class GmailOAuthTests(APITestCase):
         
         # Should return 404 (not found) for security
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class EmailSyncServiceTests(TestCase):
+    """Test Email Sync Service for fetching and processing emails"""
+    
+    def setUp(self):
+        """Set up test user and email account"""
+        self.user = User.objects.create_user(
+            username='testuser',
+            password='testpass123'
+        )
+        from crm.models import EmailAccount
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        self.email_account = EmailAccount.objects.create(
+            user=self.user,
+            email='test@gmail.com',
+            provider='gmail',
+            access_token='test_access_token',
+            refresh_token='test_refresh_token',
+            token_expires_at=timezone.now() + timedelta(hours=1),
+            is_active=True
+        )
+    
+    @patch('crm.services.gmail_service.build')
+    def test_fetch_emails_from_gmail(self, mock_build):
+        """Test fetching emails from Gmail API"""
+        from crm.services.gmail_service import GmailService
+        
+        # Mock Gmail API service
+        mock_service = Mock()
+        mock_messages = Mock()
+        mock_messages.list.return_value.execute.return_value = {
+            'messages': [
+                {'id': 'msg1'},
+                {'id': 'msg2'},
+            ]
+        }
+        mock_messages.get.return_value.execute.side_effect = [
+            {
+                'id': 'msg1',
+                'threadId': 'thread1',
+                'labelIds': ['INBOX'],
+                'snippet': 'Thank you for your application',
+                'payload': {
+                    'headers': [
+                        {'name': 'From', 'value': 'noreply@google.com'},
+                        {'name': 'Subject', 'value': 'Application Received'}
+                    ],
+                    'body': {'data': 'dGVzdCBib2R5'}  # base64 encoded "test body"
+                }
+            },
+            {
+                'id': 'msg2',
+                'threadId': 'thread2',
+                'labelIds': ['INBOX'],
+                'snippet': 'We received your application',
+                'payload': {
+                    'headers': [
+                        {'name': 'From', 'value': 'recruiter@company.com'},
+                        {'name': 'Subject', 'value': 'Application Confirmation'}
+                    ],
+                    'body': {'data': 'YW5vdGhlciBib2R5'}  # base64 encoded "another body"
+                }
+            }
+        ]
+        mock_service.users.return_value.messages.return_value = mock_messages
+        mock_build.return_value = mock_service
+        
+        gmail_service = GmailService(self.email_account)
+        emails = gmail_service.fetch_recent_emails(max_results=10)
+        
+        self.assertEqual(len(emails), 2)
+        self.assertEqual(emails[0]['id'], 'msg1')
+        self.assertEqual(emails[0]['subject'], 'Application Received')
+        self.assertEqual(emails[0]['from'], 'noreply@google.com')
+        self.assertIn('body', emails[0])
+        mock_messages.list.assert_called_once()
+        self.assertEqual(mock_messages.get.call_count, 2)
+    
+    @patch('crm.services.gmail_service.build')
+    def test_fetch_emails_handles_empty_inbox(self, mock_build):
+        """Test fetching emails when inbox is empty"""
+        from crm.services.gmail_service import GmailService
+        
+        # Mock empty inbox
+        mock_service = Mock()
+        mock_messages = Mock()
+        mock_messages.list.return_value.execute.return_value = {}
+        mock_service.users.return_value.messages.return_value = mock_messages
+        mock_build.return_value = mock_service
+        
+        gmail_service = GmailService(self.email_account)
+        emails = gmail_service.fetch_recent_emails(max_results=10)
+        
+        self.assertEqual(len(emails), 0)
+        mock_messages.list.assert_called_once()
+    
+    @patch('crm.services.gmail_service.build')
+    def test_fetch_emails_handles_api_errors(self, mock_build):
+        """Test handling Gmail API errors"""
+        from crm.services.gmail_service import GmailService
+        from googleapiclient.errors import HttpError
+        
+        # Mock API error
+        mock_service = Mock()
+        mock_messages = Mock()
+        mock_messages.list.return_value.execute.side_effect = HttpError(
+            resp=Mock(status=500),
+            content=b'Internal Server Error'
+        )
+        mock_service.users.return_value.messages.return_value = mock_messages
+        mock_build.return_value = mock_service
+        
+        gmail_service = GmailService(self.email_account)
+        
+        with self.assertRaises(HttpError):
+            gmail_service.fetch_recent_emails(max_results=10)
+    
+    @patch('crm.services.email_sync_service.GmailService')
+    @patch('crm.services.email_sync_service.EmailProcessor')
+    def test_sync_emails_processes_and_creates_detected_applications(self, mock_processor_class, mock_gmail_class):
+        """Test that sync service processes emails and creates auto-detected applications"""
+        from crm.services.email_sync_service import EmailSyncService
+        from crm.models import AutoDetectedApplication
+        
+        # Mock Gmail service
+        mock_gmail_instance = Mock()
+        mock_gmail_instance.fetch_recent_emails.return_value = [
+            {
+                'id': 'msg1',
+                'subject': 'Thank you for your application',
+                'body': 'We received your application to Google.',
+                'from': 'noreply@google.com'
+            }
+        ]
+        mock_gmail_class.return_value = mock_gmail_instance
+        
+        # Mock EmailProcessor
+        mock_processor_instance = Mock()
+        mock_processor_instance.process_email.return_value = {
+            'type': 'application',
+            'confidence': 0.85,
+            'source': 'pattern',
+            'used_ai': False,
+            'data': {
+                'company_name': 'Google'
+            }
+        }
+        mock_processor_class.return_value = mock_processor_instance
+        
+        sync_service = EmailSyncService()
+        result = sync_service.sync_emails_for_account(self.email_account)
+        
+        self.assertEqual(result['processed'], 1)
+        self.assertEqual(result['created'], 1)
+        self.assertEqual(result['skipped'], 0)
+        
+        # Verify AutoDetectedApplication was created
+        detected = AutoDetectedApplication.objects.filter(email_account=self.email_account).first()
+        self.assertIsNotNone(detected)
+        self.assertEqual(detected.company_name, 'Google')
+        self.assertEqual(detected.email_message_id, 'msg1')
+        self.assertEqual(detected.status, 'pending')
+        self.assertGreater(detected.confidence_score, 0.7)
+    
+    @patch('crm.services.email_sync_service.GmailService')
+    @patch('crm.services.email_sync_service.EmailProcessor')
+    def test_sync_emails_skips_duplicates(self, mock_processor_class, mock_gmail_class):
+        """Test that sync service skips emails that were already processed"""
+        from crm.services.email_sync_service import EmailSyncService
+        from crm.models import AutoDetectedApplication
+        
+        # Create existing detected application
+        AutoDetectedApplication.objects.create(
+            email_account=self.email_account,
+            email_message_id='msg1',
+            company_name='Existing Company',
+            confidence_score=0.8,
+            status='pending'
+        )
+        
+        # Mock Gmail service to return same email
+        mock_gmail_instance = Mock()
+        mock_gmail_instance.fetch_recent_emails.return_value = [
+            {
+                'id': 'msg1',
+                'subject': 'Thank you for your application',
+                'body': 'We received your application.',
+                'from': 'noreply@google.com'
+            }
+        ]
+        mock_gmail_class.return_value = mock_gmail_instance
+        
+        # Mock EmailProcessor
+        mock_processor_instance = Mock()
+        mock_processor_instance.process_email.return_value = {
+            'type': 'application',
+            'confidence': 0.85,
+            'source': 'pattern',
+            'data': {'company_name': 'Google'}
+        }
+        mock_processor_class.return_value = mock_processor_instance
+        
+        sync_service = EmailSyncService()
+        result = sync_service.sync_emails_for_account(self.email_account)
+        
+        self.assertEqual(result['processed'], 1)
+        self.assertEqual(result['created'], 0)
+        self.assertEqual(result['skipped'], 1)
+        
+        # Verify no duplicate was created
+        detected_count = AutoDetectedApplication.objects.filter(
+            email_account=self.email_account,
+            email_message_id='msg1'
+        ).count()
+        self.assertEqual(detected_count, 1)
+    
+    @patch('crm.services.email_sync_service.GmailService')
+    @patch('crm.services.email_sync_service.EmailProcessor')
+    def test_sync_emails_skips_non_job_related_emails(self, mock_processor_class, mock_gmail_class):
+        """Test that sync service skips emails that aren't job-related"""
+        from crm.services.email_sync_service import EmailSyncService
+        from crm.models import AutoDetectedApplication
+        
+        # Mock Gmail service
+        mock_gmail_instance = Mock()
+        mock_gmail_instance.fetch_recent_emails.return_value = [
+            {
+                'id': 'msg1',
+                'subject': 'Newsletter',
+                'body': 'Check out our latest deals!',
+                'from': 'newsletter@store.com'
+            }
+        ]
+        mock_gmail_class.return_value = mock_gmail_instance
+        
+        # Mock EmailProcessor to return unknown type
+        mock_processor_instance = Mock()
+        mock_processor_instance.process_email.return_value = {
+            'type': 'unknown',
+            'confidence': 0.2,
+            'source': 'pattern',
+            'data': {}
+        }
+        mock_processor_class.return_value = mock_processor_instance
+        
+        sync_service = EmailSyncService()
+        result = sync_service.sync_emails_for_account(self.email_account)
+        
+        self.assertEqual(result['processed'], 1)
+        self.assertEqual(result['created'], 0)
+        self.assertEqual(result['skipped'], 1)
+        
+        # Verify no detected application was created
+        detected_count = AutoDetectedApplication.objects.filter(
+            email_account=self.email_account
+        ).count()
+        self.assertEqual(detected_count, 0)
+    
+    @patch('crm.services.email_sync_service.GmailService')
+    @patch('crm.services.email_sync_service.EmailProcessor')
+    def test_sync_emails_updates_last_sync_at(self, mock_processor_class, mock_gmail_class):
+        """Test that sync service updates EmailAccount.last_sync_at"""
+        from crm.services.email_sync_service import EmailSyncService
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        # Set last_sync_at to old value
+        old_sync_time = timezone.now() - timedelta(days=1)
+        self.email_account.last_sync_at = old_sync_time
+        self.email_account.save()
+        
+        # Mock Gmail service (empty inbox)
+        mock_gmail_instance = Mock()
+        mock_gmail_instance.fetch_recent_emails.return_value = []
+        mock_gmail_class.return_value = mock_gmail_instance
+        
+        # Mock EmailProcessor
+        mock_processor_instance = Mock()
+        mock_processor_class.return_value = mock_processor_instance
+        
+        sync_service = EmailSyncService()
+        sync_service.sync_emails_for_account(self.email_account)
+        
+        # Refresh from database
+        self.email_account.refresh_from_db()
+        
+        # Verify last_sync_at was updated
+        self.assertIsNotNone(self.email_account.last_sync_at)
+        self.assertGreater(self.email_account.last_sync_at, old_sync_time)
+    
+    @patch('crm.services.email_sync_service.GmailService')
+    def test_sync_emails_handles_gmail_service_errors(self, mock_gmail_class):
+        """Test that sync service handles Gmail API errors gracefully"""
+        from crm.services.email_sync_service import EmailSyncService
+        from googleapiclient.errors import HttpError
+        
+        # Mock Gmail service to raise error
+        mock_gmail_instance = Mock()
+        mock_gmail_instance.fetch_recent_emails.side_effect = HttpError(
+            resp=Mock(status=401),
+            content=b'Unauthorized'
+        )
+        mock_gmail_class.return_value = mock_gmail_instance
+        
+        sync_service = EmailSyncService()
+        
+        with self.assertRaises(HttpError):
+            sync_service.sync_emails_for_account(self.email_account)
+    
+    @patch('crm.services.email_sync_service.GmailService')
+    @patch('crm.services.email_sync_service.EmailProcessor')
+    def test_sync_emails_handles_multiple_email_types(self, mock_processor_class, mock_gmail_class):
+        """Test that sync service handles different email types (application, rejection, assessment)"""
+        from crm.services.email_sync_service import EmailSyncService
+        from crm.models import AutoDetectedApplication
+        
+        # Mock Gmail service with multiple emails
+        mock_gmail_instance = Mock()
+        mock_gmail_instance.fetch_recent_emails.return_value = [
+            {
+                'id': 'msg1',
+                'subject': 'Thank you for your application',
+                'body': 'We received your application.',
+                'from': 'noreply@google.com'
+            },
+            {
+                'id': 'msg2',
+                'subject': 'Unfortunately',
+                'body': 'We will not be moving forward.',
+                'from': 'noreply@company.com'
+            },
+            {
+                'id': 'msg3',
+                'subject': 'Assessment',
+                'body': 'Please complete the assessment.',
+                'from': 'recruiter@company.com'
+            }
+        ]
+        mock_gmail_class.return_value = mock_gmail_instance
+        
+        # Mock EmailProcessor to return different types
+        mock_processor_instance = Mock()
+        mock_processor_instance.process_email.side_effect = [
+            {
+                'type': 'application',
+                'confidence': 0.85,
+                'source': 'pattern',
+                'data': {'company_name': 'Google'}
+            },
+            {
+                'type': 'rejection',
+                'confidence': 0.80,
+                'source': 'pattern',
+                'data': {'company_name': 'Company'}
+            },
+            {
+                'type': 'assessment',
+                'confidence': 0.75,
+                'source': 'pattern',
+                'data': {'company_name': 'Company', 'deadline': '2024-12-31'}
+            }
+        ]
+        mock_processor_class.return_value = mock_processor_instance
+        
+        sync_service = EmailSyncService()
+        result = sync_service.sync_emails_for_account(self.email_account)
+        
+        self.assertEqual(result['processed'], 3)
+        self.assertEqual(result['created'], 3)
+        
+        # Verify all three were created
+        detected_count = AutoDetectedApplication.objects.filter(
+            email_account=self.email_account
+        ).count()
+        self.assertEqual(detected_count, 3)
