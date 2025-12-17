@@ -3144,3 +3144,291 @@ class EmailSyncServiceTests(TestCase):
             email_account=self.email_account
         ).count()
         self.assertEqual(detected_count, 3)
+
+
+class AutoDetectedApplicationAPITests(APITestCase):
+    """Test AutoDetectedApplication API endpoints"""
+    
+    def setUp(self):
+        """Set up test user, email account, and detected applications"""
+        self.user = User.objects.create_user(
+            username='testuser',
+            password='testpass123'
+        )
+        self.client.force_authenticate(user=self.user)
+        
+        from crm.models import EmailAccount, AutoDetectedApplication
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        # Create email account
+        self.email_account = EmailAccount.objects.create(
+            user=self.user,
+            email='test@gmail.com',
+            provider='gmail',
+            access_token='token',
+            refresh_token='refresh',
+            token_expires_at=timezone.now() + timedelta(hours=1),
+            is_active=True
+        )
+        
+        # Create detected applications
+        self.detected_app1 = AutoDetectedApplication.objects.create(
+            email_account=self.email_account,
+            email_message_id='msg1',
+            company_name='Google',
+            position='Software Engineer',
+            confidence_score=0.85,
+            status='pending'
+        )
+        
+        self.detected_app2 = AutoDetectedApplication.objects.create(
+            email_account=self.email_account,
+            email_message_id='msg2',
+            company_name='Microsoft',
+            position='Senior Developer',
+            confidence_score=0.90,
+            status='pending'
+        )
+        
+        self.detected_app3 = AutoDetectedApplication.objects.create(
+            email_account=self.email_account,
+            email_message_id='msg3',
+            company_name='Apple',
+            position='iOS Developer',
+            confidence_score=0.75,
+            status='accepted'
+        )
+    
+    def test_list_auto_detected_applications(self):
+        """Test listing auto-detected applications"""
+        response = self.client.get('/api/auto-detected-applications/')
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 3)  # All three detected apps
+    
+    def test_list_auto_detected_applications_filter_by_status(self):
+        """Test filtering auto-detected applications by status"""
+        response = self.client.get('/api/auto-detected-applications/?status=pending')
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 2)  # Only pending ones
+        self.assertTrue(all(item['status'] == 'pending' for item in response.data))
+    
+    def test_get_auto_detected_application(self):
+        """Test retrieving a specific auto-detected application"""
+        response = self.client.get(f'/api/auto-detected-applications/{self.detected_app1.id}/')
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['company_name'], 'Google')
+        self.assertEqual(response.data['position'], 'Software Engineer')
+        self.assertEqual(response.data['confidence_score'], 0.85)
+        self.assertEqual(response.data['status'], 'pending')
+    
+    def test_accept_auto_detected_application(self):
+        """Test accepting a detected application and creating an Application"""
+        from crm.models import Application, Stage
+        
+        # Create a stage for the application
+        stage = Stage.objects.create(name="Applied", order=1)
+        
+        response = self.client.post(f'/api/auto-detected-applications/{self.detected_app1.id}/accept/')
+        
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIn('application', response.data)
+        
+        # Verify Application was created
+        application_id = response.data['application']['id']
+        application = Application.objects.get(id=application_id)
+        self.assertEqual(application.company_name, 'Google')
+        self.assertEqual(application.position, 'Software Engineer')
+        self.assertEqual(application.created_by, self.user)
+        
+        # Verify detected application status was updated
+        self.detected_app1.refresh_from_db()
+        self.assertEqual(self.detected_app1.status, 'accepted')
+        self.assertEqual(self.detected_app1.merged_into_application, application)
+    
+    def test_accept_auto_detected_application_with_custom_data(self):
+        """Test accepting detected application with custom application data"""
+        from crm.models import Application, Stage
+        
+        stage = Stage.objects.create(name="Applied", order=1)
+        
+        response = self.client.post(
+            f'/api/auto-detected-applications/{self.detected_app1.id}/accept/',
+            {
+                'salary_range': '150k-200k',
+                'stack': 'Python, Django, React'
+            }
+        )
+        
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        
+        application_id = response.data['application']['id']
+        application = Application.objects.get(id=application_id)
+        self.assertEqual(application.salary_range, '150k-200k')
+        self.assertEqual(application.stack, 'Python, Django, React')
+        self.assertEqual(application.company_name, 'Google')  # From detected app
+    
+    def test_reject_auto_detected_application(self):
+        """Test rejecting a detected application"""
+        response = self.client.post(f'/api/auto-detected-applications/{self.detected_app1.id}/reject/')
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        # Verify detected application status was updated
+        self.detected_app1.refresh_from_db()
+        self.assertEqual(self.detected_app1.status, 'rejected')
+        self.assertIsNotNone(self.detected_app1.reviewed_at)
+    
+    def test_merge_auto_detected_application_with_existing(self):
+        """Test merging detected application with existing Application"""
+        from crm.models import Application, Stage
+        
+        stage = Stage.objects.create(name="Applied", order=1)
+        
+        # Create existing application
+        existing_app = Application.objects.create(
+            company_name='Google',
+            position='Software Engineer',
+            stage=stage,
+            created_by=self.user
+        )
+        
+        response = self.client.post(
+            f'/api/auto-detected-applications/{self.detected_app1.id}/merge/',
+            {'application_id': existing_app.id}
+        )
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        # Verify detected application was merged
+        self.detected_app1.refresh_from_db()
+        self.assertEqual(self.detected_app1.status, 'merged')
+        self.assertEqual(self.detected_app1.merged_into_application, existing_app)
+        self.assertIsNotNone(self.detected_app1.reviewed_at)
+    
+    def test_merge_requires_application_id(self):
+        """Test that merge action requires application_id"""
+        response = self.client.post(f'/api/auto-detected-applications/{self.detected_app1.id}/merge/')
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('application_id', response.data)
+    
+    def test_merge_validates_application_exists(self):
+        """Test that merge validates the application exists"""
+        response = self.client.post(
+            f'/api/auto-detected-applications/{self.detected_app1.id}/merge/',
+            {'application_id': 99999}
+        )
+        
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+    
+    def test_user_only_sees_own_detected_applications(self):
+        """Test that users only see their own auto-detected applications"""
+        from crm.models import EmailAccount, AutoDetectedApplication
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        # Create another user with detected applications
+        other_user = User.objects.create_user(
+            username='otheruser',
+            password='testpass123'
+        )
+        
+        other_account = EmailAccount.objects.create(
+            user=other_user,
+            email='other@gmail.com',
+            provider='gmail',
+            access_token='token',
+            refresh_token='refresh',
+            token_expires_at=timezone.now() + timedelta(hours=1),
+            is_active=True
+        )
+        
+        AutoDetectedApplication.objects.create(
+            email_account=other_account,
+            email_message_id='other_msg1',
+            company_name='Other Company',
+            confidence_score=0.8,
+            status='pending'
+        )
+        
+        response = self.client.get('/api/auto-detected-applications/')
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Should only see own detected applications
+        self.assertEqual(len(response.data), 3)
+        self.assertTrue(all(
+            item['email_account'] == self.email_account.id 
+            for item in response.data
+        ))
+    
+    def test_cannot_access_other_user_detected_application(self):
+        """Test that users cannot access other user's detected applications"""
+        from crm.models import EmailAccount, AutoDetectedApplication
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        other_user = User.objects.create_user(
+            username='otheruser',
+            password='testpass123'
+        )
+        
+        other_account = EmailAccount.objects.create(
+            user=other_user,
+            email='other@gmail.com',
+            provider='gmail',
+            access_token='token',
+            refresh_token='refresh',
+            token_expires_at=timezone.now() + timedelta(hours=1),
+            is_active=True
+        )
+        
+        other_detected = AutoDetectedApplication.objects.create(
+            email_account=other_account,
+            email_message_id='other_msg1',
+            company_name='Other Company',
+            confidence_score=0.8,
+            status='pending'
+        )
+        
+        response = self.client.get(f'/api/auto-detected-applications/{other_detected.id}/')
+        
+        # Should return 404 (not found) for security
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+    
+    def test_auto_detected_application_requires_authentication(self):
+        """Test that auto-detected application endpoints require authentication"""
+        # Logout
+        self.client.force_authenticate(user=None)
+        
+        response = self.client.get('/api/auto-detected-applications/')
+        
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+    
+    def test_list_filters_by_pending_status(self):
+        """Test that list endpoint can filter by pending status"""
+        response = self.client.get('/api/auto-detected-applications/?status=pending')
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 2)
+        self.assertTrue(all(item['status'] == 'pending' for item in response.data))
+    
+    def test_accept_updates_reviewed_at_timestamp(self):
+        """Test that accepting updates the reviewed_at timestamp"""
+        from crm.models import Stage
+        
+        stage = Stage.objects.create(name="Applied", order=1)
+        
+        # Verify reviewed_at is None initially
+        self.assertIsNone(self.detected_app1.reviewed_at)
+        
+        response = self.client.post(f'/api/auto-detected-applications/{self.detected_app1.id}/accept/')
+        
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        
+        # Verify reviewed_at was set
+        self.detected_app1.refresh_from_db()
+        self.assertIsNotNone(self.detected_app1.reviewed_at)
