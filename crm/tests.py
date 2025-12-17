@@ -1438,3 +1438,158 @@ class EmailAccountModelTests(TestCase):
         self.assertEqual(account.refresh_token, '')  # Default should be empty
         self.assertIsNone(account.token_expires_at)  # Default should be None
         self.assertIsNone(account.last_sync_at)  # Default should be None
+
+
+class AutoDetectedApplicationModelTests(TestCase):
+    """Tests for the AutoDetectedApplication model"""
+    
+    def setUp(self):
+        """Set up test user and email account"""
+        self.user = User.objects.create_user(
+            username='testuser',
+            password='testpass123'
+        )
+        from .models import EmailAccount
+        self.email_account = EmailAccount.objects.create(
+            user=self.user,
+            email='test@gmail.com',
+            provider='gmail'
+        )
+    
+    def test_create_auto_detected_application(self):
+        """Test creating an auto-detected application"""
+        from .models import AutoDetectedApplication
+        
+        detected = AutoDetectedApplication.objects.create(
+            email_account=self.email_account,
+            email_message_id='msg123',
+            company_name='Google',
+            position='Software Engineer',
+            confidence_score=0.9,
+            status='pending'
+        )
+        
+        self.assertEqual(detected.company_name, 'Google')
+        self.assertEqual(detected.position, 'Software Engineer')
+        self.assertEqual(detected.confidence_score, 0.9)
+        self.assertEqual(detected.status, 'pending')
+        self.assertEqual(detected.email_message_id, 'msg123')
+        self.assertIsNotNone(detected.detected_at)
+        self.assertIsNone(detected.reviewed_at)
+        self.assertIsNone(detected.merged_into_application)
+    
+    def test_auto_detected_application_status_choices(self):
+        """Test status field accepts valid choices"""
+        from .models import AutoDetectedApplication
+        
+        # Test valid choices
+        for status in ['pending', 'accepted', 'rejected', 'merged']:
+            detected = AutoDetectedApplication.objects.create(
+                email_account=self.email_account,
+                email_message_id=f'msg_{status}',
+                company_name='Test Corp',
+                status=status
+            )
+            self.assertEqual(detected.status, status)
+    
+    def test_auto_detected_application_default_values(self):
+        """Test that auto-detected application has correct default values"""
+        from .models import AutoDetectedApplication
+        
+        detected = AutoDetectedApplication.objects.create(
+            email_account=self.email_account,
+            email_message_id='msg_default',
+            company_name='Default Corp'
+        )
+        
+        self.assertEqual(detected.status, 'pending')  # Default status
+        self.assertEqual(detected.confidence_score, 0.0)  # Default confidence
+        self.assertEqual(detected.position, '')  # Default empty
+        self.assertEqual(detected.where_applied, '')  # Default empty
+        self.assertIsNotNone(detected.detected_at)
+        self.assertIsNone(detected.reviewed_at)
+        self.assertIsNone(detected.merged_into_application)
+    
+    def test_auto_detected_application_ordering(self):
+        """Test that auto-detected applications are ordered by detected_at descending"""
+        from .models import AutoDetectedApplication
+        from django.utils import timezone
+        import time
+        
+        # Create multiple detected applications with slight time differences
+        detected1 = AutoDetectedApplication.objects.create(
+            email_account=self.email_account,
+            email_message_id='msg1',
+            company_name='Company 1'
+        )
+        time.sleep(0.01)  # Small delay to ensure different timestamps
+        
+        detected2 = AutoDetectedApplication.objects.create(
+            email_account=self.email_account,
+            email_message_id='msg2',
+            company_name='Company 2'
+        )
+        
+        # Query should return newest first
+        all_detected = list(AutoDetectedApplication.objects.all())
+        self.assertEqual(all_detected[0], detected2)
+        self.assertEqual(all_detected[1], detected1)
+    
+    def test_auto_detected_application_cascade_delete(self):
+        """Test that deleting email account deletes associated detected applications"""
+        from .models import AutoDetectedApplication
+        
+        detected = AutoDetectedApplication.objects.create(
+            email_account=self.email_account,
+            email_message_id='msg_cascade',
+            company_name='Cascade Corp'
+        )
+        
+        # Delete email account
+        self.email_account.delete()
+        
+        # Detected application should be deleted
+        self.assertFalse(AutoDetectedApplication.objects.filter(id=detected.id).exists())
+    
+    def test_auto_detected_application_merge_tracking(self):
+        """Test that merged_into_application field works correctly"""
+        from .models import AutoDetectedApplication, Application, Stage
+        
+        # Create an application to merge into
+        stage = Stage.objects.create(name="Applied", order=1)
+        application = Application.objects.create(
+            company_name="Existing Corp",
+            position="Developer",
+            salary_range="100k-120k",
+            stage=stage
+        )
+        
+        detected = AutoDetectedApplication.objects.create(
+            email_account=self.email_account,
+            email_message_id='msg_merge',
+            company_name='New Corp',
+            merged_into_application=application
+        )
+        
+        self.assertEqual(detected.merged_into_application, application)
+        
+        # Test SET_NULL behavior - if application is deleted, merged_into_application should be None
+        application.delete()
+        detected.refresh_from_db()
+        self.assertIsNone(detected.merged_into_application)
+    
+    def test_auto_detected_application_string_representation(self):
+        """Test string representation of auto-detected application"""
+        from .models import AutoDetectedApplication
+        
+        detected = AutoDetectedApplication.objects.create(
+            email_account=self.email_account,
+            email_message_id='msg_str',
+            company_name='String Corp',
+            position='Engineer'
+        )
+        
+        # Should include company name and position
+        str_repr = str(detected)
+        self.assertIn('String Corp', str_repr)
+        self.assertIn('Engineer', str_repr)
