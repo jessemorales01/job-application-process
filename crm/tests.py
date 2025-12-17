@@ -1593,3 +1593,193 @@ class AutoDetectedApplicationModelTests(TestCase):
         str_repr = str(detected)
         self.assertIn('String Corp', str_repr)
         self.assertIn('Engineer', str_repr)
+
+
+class EmailParserTests(TestCase):
+    """Tests for the EmailParser service"""
+    
+    def setUp(self):
+        """Set up email parser instance"""
+        # Import will fail until service is created (RED phase)
+        try:
+            from crm.services.email_parser import EmailParser
+            self.parser = EmailParser()
+        except ImportError:
+            self.parser = None
+    
+    def test_detect_application_confirmation(self):
+        """Test detecting application confirmation emails"""
+        from crm.services.email_parser import EmailParser
+        parser = EmailParser()
+        
+        subject = "Thank you for your application"
+        body = "Thank you for applying to Google for the Software Engineer position."
+        
+        result = parser.classify_email(subject, body, "noreply@google.com")
+        
+        self.assertEqual(result['type'], 'application')
+        self.assertGreater(result['confidence'], 0.7)
+        self.assertIn('company_name', result['data'])
+        self.assertFalse(result['needs_ai'])
+    
+    def test_detect_application_variations(self):
+        """Test detecting various application confirmation patterns"""
+        from crm.services.email_parser import EmailParser
+        parser = EmailParser()
+        
+        test_cases = [
+            ("We received your application", "Your application has been received."),
+            ("Application submitted", "Thank you for submitting your application."),
+            ("Thank you for applying", "We have received your application."),
+        ]
+        
+        for subject, body in test_cases:
+            result = parser.classify_email(subject, body, "noreply@company.com")
+            self.assertEqual(result['type'], 'application', f"Failed for: {subject}")
+            self.assertGreater(result['confidence'], 0.7)
+    
+    def test_detect_rejection(self):
+        """Test detecting rejection emails"""
+        from crm.services.email_parser import EmailParser
+        parser = EmailParser()
+        
+        subject = "Update on your application"
+        body = "We've decided to move forward with other candidates."
+        
+        result = parser.classify_email(subject, body, "recruiter@company.com")
+        
+        self.assertEqual(result['type'], 'rejection')
+        self.assertGreater(result['confidence'], 0.7)
+        self.assertFalse(result['needs_ai'])
+    
+    def test_detect_rejection_variations(self):
+        """Test detecting various rejection patterns"""
+        from crm.services.email_parser import EmailParser
+        parser = EmailParser()
+        
+        test_cases = [
+            ("Unfortunately", "We will not be moving forward with your application."),
+            ("We will not be moving forward", "Thank you for your interest."),
+            ("We have chosen to pursue", "Other candidates were selected."),
+        ]
+        
+        for subject, body in test_cases:
+            result = parser.classify_email(subject, body, "recruiter@company.com")
+            self.assertEqual(result['type'], 'rejection', f"Failed for: {subject}")
+            self.assertGreater(result['confidence'], 0.7)
+    
+    def test_detect_assessment(self):
+        """Test detecting assessment emails"""
+        from crm.services.email_parser import EmailParser
+        parser = EmailParser()
+        
+        subject = "Next Steps: Technical Assessment"
+        body = "Please complete the coding challenge by December 31, 2024."
+        
+        result = parser.classify_email(subject, body, "recruiter@company.com")
+        
+        self.assertEqual(result['type'], 'assessment')
+        self.assertGreater(result['confidence'], 0.7)
+        self.assertIn('data', result)
+        self.assertFalse(result['needs_ai'])
+    
+    def test_detect_assessment_variations(self):
+        """Test detecting various assessment patterns"""
+        from crm.services.email_parser import EmailParser
+        parser = EmailParser()
+        
+        test_cases = [
+            ("Take-home assignment", "Please complete the take-home project."),
+            ("Coding challenge", "We'd like you to complete a coding challenge."),
+            ("Technical evaluation", "Next step is a technical evaluation."),
+        ]
+        
+        for subject, body in test_cases:
+            result = parser.classify_email(subject, body, "recruiter@company.com")
+            self.assertEqual(result['type'], 'assessment', f"Failed for: {subject}")
+            self.assertGreater(result['confidence'], 0.7)
+    
+    def test_low_confidence_requires_ai(self):
+        """Test that uncertain emails flag for AI analysis"""
+        from crm.services.email_parser import EmailParser
+        parser = EmailParser()
+        
+        subject = "Hello"
+        body = "Just wanted to touch base."
+        
+        result = parser.classify_email(subject, body, "unknown@company.com")
+        
+        self.assertTrue(result['needs_ai'])
+        self.assertLess(result['confidence'], 0.7)
+        self.assertIsNone(result.get('type'))
+    
+    def test_extract_company_name_from_sender(self):
+        """Test extracting company name from email sender domain"""
+        from crm.services.email_parser import EmailParser
+        parser = EmailParser()
+        
+        subject = "Thank you for your application"
+        body = "We received your application."
+        
+        result = parser.classify_email(subject, body, "noreply@google.com")
+        self.assertIn('company_name', result['data'])
+        
+        result2 = parser.classify_email(subject, body, "noreply@microsoft.com")
+        self.assertIn('company_name', result2['data'])
+    
+    def test_extract_company_name_ignores_personal_domains(self):
+        """Test that personal email domains are not extracted as company names"""
+        from crm.services.email_parser import EmailParser
+        parser = EmailParser()
+        
+        subject = "Thank you for your application"
+        body = "We received your application."
+        
+        result = parser.classify_email(subject, body, "user@gmail.com")
+        # Should not extract 'gmail' as company name
+        company_name = result['data'].get('company_name')
+        self.assertNotEqual(company_name, 'Gmail')
+    
+    def test_extract_deadline_from_assessment_email(self):
+        """Test extracting deadline from assessment emails"""
+        from crm.services.email_parser import EmailParser
+        parser = EmailParser()
+        
+        subject = "Technical Assessment"
+        body = "Please complete the assessment by December 31, 2024."
+        
+        result = parser.classify_email(subject, body, "recruiter@company.com")
+        
+        self.assertEqual(result['type'], 'assessment')
+        self.assertIn('deadline', result['data'])
+    
+    def test_return_structure(self):
+        """Test that classify_email returns correct structure"""
+        from crm.services.email_parser import EmailParser
+        parser = EmailParser()
+        
+        result = parser.classify_email("Test", "Body", "sender@example.com")
+        
+        # Check required keys
+        self.assertIn('type', result)
+        self.assertIn('confidence', result)
+        self.assertIn('data', result)
+        self.assertIn('needs_ai', result)
+        
+        # Check types
+        self.assertIsInstance(result['confidence'], (int, float))
+        self.assertIsInstance(result['data'], dict)
+        self.assertIsInstance(result['needs_ai'], bool)
+    
+    def test_case_insensitive_pattern_matching(self):
+        """Test that pattern matching is case insensitive"""
+        from crm.services.email_parser import EmailParser
+        parser = EmailParser()
+        
+        subject = "THANK YOU FOR YOUR APPLICATION"
+        body = "WE RECEIVED YOUR APPLICATION."
+        
+        result = parser.classify_email(subject, body, "noreply@company.com")
+        
+        self.assertEqual(result['type'], 'application')
+        self.assertGreater(result['confidence'], 0.7)
