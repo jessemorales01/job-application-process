@@ -6,6 +6,7 @@ import JobOffers from '../views/JobOffers.vue'
 import Applications from '../views/Applications.vue'
 import Activities from '../views/Activities.vue'
 import Settings from '../views/Settings.vue'
+import ReviewQueue from '../views/ReviewQueue.vue'
 
 const routes = [
   {
@@ -52,6 +53,12 @@ const routes = [
     path: '/settings',
     name: 'Settings',
     component: Settings,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/review-queue',
+    name: 'ReviewQueue',
+    component: ReviewQueue,
     meta: { requiresAuth: true }
   }
 ]
