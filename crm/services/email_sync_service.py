@@ -75,10 +75,12 @@ class EmailSyncService:
                         continue
                     
                     # Process email with EmailProcessor
+                    # Also pass email date for applied_date extraction
                     result = email_processor.process_email({
                         'subject': email.get('subject', ''),
                         'body': email.get('body', ''),
-                        'from': email.get('from', '')
+                        'from': email.get('from', ''),
+                        'date': email.get('date', '')  # Pass email date for applied_date extraction
                     })
                     
                     # Normalize email type (AI might return 'application_confirmation', normalize to 'application')
@@ -89,22 +91,61 @@ class EmailSyncService:
                     # Only create detected application if:
                     # 1. Type is job-related
                     # 2. Confidence is above threshold
+                    # 3. Company name is available (REQUIRED)
                     if (email_type in self.JOB_RELATED_TYPES and 
                         result.get('confidence', 0) >= self.MIN_CONFIDENCE_THRESHOLD):
                         
-                        # Extract data
+                        # Extract data (AI returns fields directly, pattern returns in 'data' dict)
                         data = result.get('data', {})
-                        company_name = data.get('company_name', 'Unknown Company')
-                        position = data.get('position', '')
-                        where_applied = data.get('where_applied', '')
+                        if not data:
+                            # AI returns fields directly, pattern returns in 'data'
+                            data = result
                         
-                        # Create AutoDetectedApplication
+                        # Extract all available fields
+                        company_name = data.get('company_name')
+                        
+                        # Company name is REQUIRED - skip if not found
+                        if not company_name or company_name.strip() == '' or company_name.lower() == 'unknown company':
+                            stats['skipped'] += 1
+                            continue
+                        
+                        position = data.get('position', '')
+                        stack = data.get('stack', '')
+                        where_applied = data.get('where_applied', '')
+                        applied_date = data.get('applied_date')
+                        email_contact = data.get('email', '')
+                        phone_number = data.get('phone_number', '')
+                        salary_range = data.get('salary_range', '')
+                        
+                        # Parse applied_date if it's a string
+                        if applied_date and isinstance(applied_date, str):
+                            try:
+                                from dateutil import parser as date_parser
+                                applied_date = date_parser.parse(applied_date).date()
+                            except (ValueError, TypeError):
+                                applied_date = None
+                        
+                        # Use email date as fallback for applied_date if not found in content
+                        if not applied_date and email.get('date'):
+                            try:
+                                from dateutil import parser as date_parser
+                                email_date = date_parser.parse(email['date'])
+                                applied_date = email_date.date()
+                            except (ValueError, TypeError):
+                                applied_date = None
+                        
+                        # Create AutoDetectedApplication with all extracted fields
                         AutoDetectedApplication.objects.create(
                             email_account=email_account,
                             email_message_id=email['id'],
                             company_name=company_name,
                             position=position,
+                            stack=stack,
                             where_applied=where_applied,
+                            applied_date=applied_date,
+                            email=email_contact,
+                            phone_number=phone_number,
+                            salary_range=salary_range,
                             confidence_score=result.get('confidence', 0.0),
                             status='pending'
                         )

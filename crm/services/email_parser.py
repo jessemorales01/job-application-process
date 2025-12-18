@@ -36,7 +36,7 @@ class EmailParser:
                          'monster', 'careerbuilder', 'simplyhired', 'snagajob', 'dice',
                          'naukri', 'shine', 'timesjobs', 'naukrigulf', 'jobstreet')
     
-    def classify_email(self, subject, body, sender):
+    def classify_email(self, subject, body, sender, email_date=None):
         """Classify email and extract relevant data"""
         text = f"{subject} {body}".lower()
         confidence = 0.0
@@ -47,7 +47,7 @@ class EmailParser:
         if self._matches_patterns(text, self.APPLICATION_PATTERNS):
             email_type = 'application'
             confidence = 0.85
-            extracted_data = self._extract_application_data(subject, body, sender)
+            extracted_data = self._extract_application_data(subject, body, sender, email_date)
         
         # Rejection
         elif self._matches_patterns(text, self.REJECTION_PATTERNS):
@@ -116,19 +116,25 @@ class EmailParser:
         - "Your application to [Company]"
         - "Application received for [Position] at [Company]"
         - "[Company] has received your application"
+        - "[Company] - Application"
         """
         text = f"{subject} {body}"
         
-        # Common patterns for company name extraction
+        # Common patterns for company name extraction (ordered by reliability)
         patterns = [
-            r'(?:thank you for|thanks for) (?:applying to|your application to|applying for) ([A-Z][a-zA-Z\s&]+?)(?:\.|,|$|\n)',
-            r'your application (?:to|for) ([A-Z][a-zA-Z\s&]+?)(?: (?:has been|was))',
-            r'application (?:to|for) ([A-Z][a-zA-Z\s&]+?)(?: (?:has been|was) received)',
+            r'(?:thank you for|thanks for) (?:applying to|your application to|applying for) ([A-Z][a-zA-Z\s&]+?)(?:\.|,|$|\n|for|at)',
+            r'your application (?:to|for) ([A-Z][a-zA-Z\s&]+?)(?: (?:has been|was)|\.|,|$|\n)',
+            r'application (?:to|for) ([A-Z][a-zA-Z\s&]+?)(?: (?:has been|was) received|\.|,|$|\n)',
             r'([A-Z][a-zA-Z\s&]+?) (?:has|have) received your application',
-            r'([A-Z][a-zA-Z\s&]+?) - (?:Application|Job Application)',
+            r'([A-Z][a-zA-Z\s&]+?) - (?:Application|Job Application|Job)',
             r'position at ([A-Z][a-zA-Z\s&]+?)(?:\.|,|$|\n)',
             r'role at ([A-Z][a-zA-Z\s&]+?)(?:\.|,|$|\n)',
             r'opportunity at ([A-Z][a-zA-Z\s&]+?)(?:\.|,|$|\n)',
+            r'for (?:the )?([A-Z][a-zA-Z\s&]+?) (?:position|role|job)',
+            r'at ([A-Z][a-zA-Z\s&]+?)(?:\.|,|$|\n)',
+            # More aggressive patterns for job board emails
+            r'([A-Z][a-zA-Z\s&]{2,30}?) (?:application|position|role|job)(?: (?:has been|was))',
+            r'(?:from|with) ([A-Z][a-zA-Z\s&]{2,30}?)(?:\.|,|$|\n)',
         ]
         
         for pattern in patterns:
@@ -140,17 +146,34 @@ class EmailParser:
                 company_name = company_name.strip()
                 
                 # Validate: should be reasonable length (2-50 chars) and not be a common word
-                if 2 <= len(company_name) <= 50 and not company_name.lower() in ('job', 'position', 'role', 'application'):
+                if (2 <= len(company_name) <= 50 and 
+                    not company_name.lower() in ('job', 'position', 'role', 'application', 'indeed', 'linkedin', 'myworkday')):
                     return company_name
         
         return None
     
-    def _extract_application_data(self, subject, body, sender):
+    def _extract_application_data(self, subject, body, sender, email_date=None):
         """Extract data from application confirmation emails"""
+        # Try to extract applied_date from email content first, fall back to email date
+        applied_date = self._extract_applied_date(subject, body)
+        if not applied_date and email_date:
+            # Use email date as fallback for applied_date
+            try:
+                from dateutil import parser as date_parser
+                parsed_date = date_parser.parse(email_date)
+                applied_date = parsed_date.strftime('%Y-%m-%d')
+            except (ValueError, TypeError):
+                pass
+        
         return {
             'company_name': self._extract_company_name(subject, body, sender),
             'position': self._extract_position(subject, body),
+            'stack': self._extract_stack(subject, body),
             'where_applied': self._extract_where_applied(sender),
+            'applied_date': applied_date,
+            'email': self._extract_email(subject, body),
+            'phone_number': self._extract_phone_number(subject, body),
+            'salary_range': self._extract_salary_range(subject, body),
         }
     
     def _extract_rejection_data(self, subject, body, sender):
@@ -177,16 +200,19 @@ class EmailParser:
         - "Software Engineer"
         - "Position: Software Engineer"
         - "Application for Software Engineer"
+        - "for the [Position] position"
         """
         text = f"{subject} {body}"
         
-        # Common patterns for position extraction
+        # Common patterns for position extraction (ordered by reliability)
         patterns = [
-            r'position[:\s]+([A-Z][a-zA-Z\s&/]+?)(?:\.|,|$|\n|at)',
-            r'role[:\s]+([A-Z][a-zA-Z\s&/]+?)(?:\.|,|$|\n|at)',
-            r'application (?:for|to) ([A-Z][a-zA-Z\s&/]+?)(?: (?:position|role|at))',
+            r'position[:\s]+([A-Z][a-zA-Z\s&/]+?)(?:\.|,|$|\n|at|position)',
+            r'role[:\s]+([A-Z][a-zA-Z\s&/]+?)(?:\.|,|$|\n|at|role)',
+            r'application (?:for|to) (?:the )?([A-Z][a-zA-Z\s&/]+?)(?: (?:position|role|at)|\.|,|$|\n)',
             r'([A-Z][a-zA-Z\s&/]+?) (?:position|role)(?:\.|,|$|\n)',
             r'job[:\s]+([A-Z][a-zA-Z\s&/]+?)(?:\.|,|$|\n)',
+            r'for (?:the )?([A-Z][a-zA-Z\s&/]+?) (?:position|role|job)',
+            r'([A-Z][a-zA-Z\s&/]{3,50}?) (?:Engineer|Developer|Manager|Analyst|Designer|Specialist)',
         ]
         
         for pattern in patterns:
@@ -197,8 +223,9 @@ class EmailParser:
                 position = re.sub(r'^(the|a|an)\s+', '', position, flags=re.IGNORECASE)
                 position = position.strip()
                 
-                # Validate: should be reasonable length (3-100 chars)
-                if 3 <= len(position) <= 100:
+                # Validate: should be reasonable length (3-100 chars) and not be too generic
+                if (3 <= len(position) <= 100 and 
+                    position.lower() not in ('job', 'position', 'role', 'application', 'opportunity')):
                     return position
         
         return None
@@ -219,6 +246,145 @@ class EmailParser:
         for job_board in self.JOB_BOARD_DOMAINS:
             if domain.startswith(job_board):
                 return job_board.title()  # "indeed" -> "Indeed"
+        
+        return None
+    
+    def _extract_stack(self, subject, body):
+        """
+        Extract technology stack/skills from email content.
+        
+        Looks for common patterns like:
+        - "Python, Django, React"
+        - "Technologies: JavaScript, Node.js"
+        - "Stack: Java, Spring Boot"
+        """
+        text = f"{subject} {body}"
+        
+        # Common patterns for stack extraction
+        patterns = [
+            r'(?:stack|technologies?|skills?|tools?)[:\s]+([A-Za-z0-9\s,/\-+]+?)(?:\.|,|$|\n|required)',
+            r'(?:using|with|require)[:\s]+([A-Za-z0-9\s,/\-+]+?)(?:\.|,|$|\n)',
+            r'([A-Z][a-zA-Z0-9\s,/\-+]+?)(?: stack| technologies)',
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
+            if match:
+                stack = match.group(1).strip()
+                # Clean up and validate
+                stack = re.sub(r'\s+', ' ', stack)  # Normalize whitespace
+                if 3 <= len(stack) <= 500:  # Reasonable length
+                    return stack
+        
+        return None
+    
+    def _extract_applied_date(self, subject, body):
+        """
+        Extract application date from email content.
+        
+        Looks for patterns like:
+        - "Applied on [date]"
+        - "Application submitted [date]"
+        - "Thank you for applying on [date]"
+        - Email date header (passed separately)
+        """
+        text = f"{subject} {body}"
+        
+        # Common patterns for applied date
+        patterns = [
+            r'(?:applied|application submitted|submitted) (?:on|date)[:\s]+(\w+ \d{1,2},? \d{4})',
+            r'(?:applied|application) (?:on|date)[:\s]+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+            r'thank you for (?:applying|your application) (?:on|date)[:\s]+(\w+ \d{1,2},? \d{4})',
+            r'thank you for (?:applying|your application) (?:on|date)[:\s]+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+            r'(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',  # Generic date format (last resort)
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                date_str = match.group(1)
+                try:
+                    parsed_date = date_parser.parse(date_str)
+                    return parsed_date.strftime('%Y-%m-%d')
+                except (ValueError, TypeError):
+                    continue
+        
+        return None
+    
+    def _extract_email(self, subject, body):
+        """
+        Extract email address from email content.
+        
+        Looks for email patterns in the text.
+        """
+        text = f"{subject} {body}"
+        
+        # Email pattern
+        email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+        matches = re.findall(email_pattern, text)
+        
+        # Filter out common email domains that are not contact emails
+        filtered = [email for email in matches 
+                   if not any(email.lower().endswith(f'@{domain}.com') 
+                             for domain in self.JOB_BOARD_DOMAINS)]
+        
+        if filtered:
+            return filtered[0]  # Return first valid email
+        
+        return None
+    
+    def _extract_phone_number(self, subject, body):
+        """
+        Extract phone number from email content.
+        
+        Looks for common phone number formats.
+        """
+        text = f"{subject} {body}"
+        
+        # Common phone number patterns
+        patterns = [
+            r'\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}',  # US format: (123) 456-7890
+            r'\+\d{1,3}[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}',  # International format
+            r'\d{3}[-.\s]?\d{3}[-.\s]?\d{4}',  # Simple format: 123-456-7890
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if match:
+                phone = match.group(0).strip()
+                # Clean up phone number
+                phone = re.sub(r'[^\d+]', '', phone)  # Keep only digits and +
+                if 10 <= len(phone) <= 15:  # Reasonable phone number length
+                    return phone
+        
+        return None
+    
+    def _extract_salary_range(self, subject, body):
+        """
+        Extract salary range from email content.
+        
+        Looks for patterns like:
+        - "$80,000 - $120,000"
+        - "Salary: $100k"
+        - "$50k-$70k"
+        """
+        text = f"{subject} {body}"
+        
+        # Common salary patterns
+        patterns = [
+            r'\$[\d,]+(?:k|K)?\s*[-–—]\s*\$[\d,]+(?:k|K)?',  # Range: $80k - $120k
+            r'(?:salary|compensation|pay)[:\s]+\$[\d,]+(?:k|K)?(?:\s*[-–—]\s*\$[\d,]+(?:k|K)?)?',  # With label
+            r'\$[\d,]+(?:k|K)?(?:\s*/\s*(?:year|yr|month|mo))?',  # Single value with optional period
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                salary = match.group(0).strip()
+                # Clean up
+                salary = re.sub(r'\s+', ' ', salary)
+                if 5 <= len(salary) <= 50:  # Reasonable length
+                    return salary
         
         return None
     

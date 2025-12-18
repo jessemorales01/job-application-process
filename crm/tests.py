@@ -1852,8 +1852,8 @@ class EmailParserTests(TestCase):
         from crm.services.email_parser import EmailParser
         parser = EmailParser()
         
-        subject = "Application Received"
-        body = "Stack: Python, Django, React, PostgreSQL"
+        subject = "Thank you for your application"
+        body = "We received your application. Stack: Python, Django, React, PostgreSQL"
         
         result = parser.classify_email(subject, body, "noreply@company.com")
         self.assertIn('stack', result['data'])
@@ -1867,13 +1867,13 @@ class EmailParserTests(TestCase):
         parser = EmailParser()
         
         test_cases = [
-            ("Technologies: JavaScript, Node.js, MongoDB", "JavaScript"),
-            ("Using Python, Django, React", "Python"),
-            ("Skills: Java, Spring Boot, MySQL", "Java"),
+            ("We received your application. Technologies: JavaScript, Node.js, MongoDB", "JavaScript"),
+            ("Thank you for applying. Using Python, Django, React", "Python"),
+            ("Application submitted. Skills: Java, Spring Boot, MySQL", "Java"),
         ]
         
         for body, expected_tech in test_cases:
-            result = parser.classify_email("Application", body, "noreply@company.com")
+            result = parser.classify_email("Thank you for your application", body, "noreply@company.com")
             stack = result['data'].get('stack', '')
             if stack:
                 self.assertIn(expected_tech, stack, f"Failed for: {body}")
@@ -1883,8 +1883,8 @@ class EmailParserTests(TestCase):
         from crm.services.email_parser import EmailParser
         parser = EmailParser()
         
-        subject = "Application Received"
-        body = "Thank you for applying on December 15, 2024."
+        subject = "Thank you for your application"
+        body = "We received your application. Thank you for applying on December 15, 2024."
         
         result = parser.classify_email(subject, body, "noreply@company.com")
         self.assertIn('applied_date', result['data'])
@@ -1912,8 +1912,8 @@ class EmailParserTests(TestCase):
         from crm.services.email_parser import EmailParser
         parser = EmailParser()
         
-        subject = "Application Received"
-        body = "Please contact us at recruiter@company.com for any questions."
+        subject = "Thank you for your application"
+        body = "We received your application. Please contact us at recruiter@company.com for any questions."
         
         result = parser.classify_email(subject, body, "noreply@company.com")
         self.assertIn('email', result['data'])
@@ -1926,8 +1926,8 @@ class EmailParserTests(TestCase):
         from crm.services.email_parser import EmailParser
         parser = EmailParser()
         
-        subject = "Application Received"
-        body = "Contact indeed@indeed.com or visit our site."
+        subject = "Thank you for your application"
+        body = "We received your application. Contact indeed@indeed.com or visit our site."
         
         result = parser.classify_email(subject, body, "noreply@company.com")
         email = result['data'].get('email')
@@ -1940,8 +1940,8 @@ class EmailParserTests(TestCase):
         from crm.services.email_parser import EmailParser
         parser = EmailParser()
         
-        subject = "Application Received"
-        body = "Call us at (555) 123-4567 or 555-123-4567"
+        subject = "Thank you for your application"
+        body = "We received your application. Call us at (555) 123-4567 or 555-123-4567"
         
         result = parser.classify_email(subject, body, "noreply@company.com")
         self.assertIn('phone_number', result['data'])
@@ -1954,8 +1954,8 @@ class EmailParserTests(TestCase):
         from crm.services.email_parser import EmailParser
         parser = EmailParser()
         
-        subject = "Application Received"
-        body = "Contact us at +1-555-123-4567"
+        subject = "Thank you for your application"
+        body = "We received your application. Contact us at +1-555-123-4567"
         
         result = parser.classify_email(subject, body, "noreply@company.com")
         phone = result['data'].get('phone_number')
@@ -1967,8 +1967,8 @@ class EmailParserTests(TestCase):
         from crm.services.email_parser import EmailParser
         parser = EmailParser()
         
-        subject = "Application Received"
-        body = "Salary: $80,000 - $120,000 per year"
+        subject = "Thank you for your application"
+        body = "We received your application. Salary: $80,000 - $120,000 per year"
         
         result = parser.classify_email(subject, body, "noreply@company.com")
         self.assertIn('salary_range', result['data'])
@@ -1983,13 +1983,13 @@ class EmailParserTests(TestCase):
         parser = EmailParser()
         
         test_cases = [
-            ("Compensation: $100k - $150k", "$100k"),
-            ("Pay: $50,000-$70,000", "$50"),
-            ("Salary range: $90k", "$90"),
+            ("We received your application. Compensation: $100k - $150k", "$100k"),
+            ("Thank you for applying. Pay: $50,000-$70,000", "$50"),
+            ("Application submitted. Salary range: $90k", "$90"),
         ]
         
         for body, expected_part in test_cases:
-            result = parser.classify_email("Application", body, "noreply@company.com")
+            result = parser.classify_email("Thank you for your application", body, "noreply@company.com")
             salary = result['data'].get('salary_range', '')
             if salary:
                 self.assertIn(expected_part, salary, f"Failed for: {body}")
@@ -2008,10 +2008,14 @@ class EmailParserTests(TestCase):
         for job_board in job_boards:
             sender = f"noreply@{job_board}"
             result = parser.classify_email(subject, body, sender)
-            company_name = result['data'].get('company_name', '')
+            company_name = result['data'].get('company_name')
             # Should not extract job board name as company name
-            self.assertNotIn(job_board.split('.')[0].title(), company_name, 
-                           f"Should not extract {job_board} as company name")
+            # If company_name is None, that's fine (no company extracted)
+            # If it's not None, it should not be the job board name
+            if company_name:
+                self.assertNotIn(job_board.split('.')[0].title(), company_name, 
+                               f"Should not extract {job_board} as company name")
+            # If company_name is None, that's acceptable - no company was extracted
     
     def test_all_fields_extracted_in_application_email(self):
         """Test that all fields are extracted when available in application email"""

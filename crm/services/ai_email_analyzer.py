@@ -104,16 +104,30 @@ Subject: {subject}
 From: {sender}
 Body: {body_truncated}
 
-Classify and extract JSON:
+Classify and extract JSON with all available information:
 {{
     "type": "application_confirmation|rejection|assessment|interview|interaction|other",
-    "company_name": "...",
-    "position": "...",
-    "deadline": "YYYY-MM-DD or null",
-    "action_items": ["..."],
+    "company_name": "Company name (extract from email content, not job board name)",
+    "position": "Job title/position if mentioned",
+    "stack": "Technology stack/skills if mentioned (comma-separated)",
+    "where_applied": "Job board/platform name if from Indeed, LinkedIn, etc. (null if direct application)",
+    "applied_date": "YYYY-MM-DD when application was submitted (extract from email date or content, or null)",
+    "email": "Contact email if mentioned",
+    "phone_number": "Phone number if mentioned",
+    "salary_range": "Salary range if mentioned",
+    "deadline": "YYYY-MM-DD for assessments/interviews or null",
     "confidence": 0.0-1.0,
-    "notes": "..."
+    "notes": "Any additional relevant information"
 }}
+
+Important:
+- company_name is REQUIRED - you MUST extract it from email content, NOT from job board sender domains (Indeed, LinkedIn, etc.)
+- If you cannot find a company name, return null for company_name (do not use "Unknown Company")
+- position should be present in almost all application emails - extract it if mentioned
+- applied_date should be present in almost all application emails - extract from email date header or content
+- If email is from a job board (indeed.com, linkedin.com, etc.), set where_applied to the board name
+- Only include fields that are actually mentioned in the email (use null for missing fields)
+- Be precise and accurate - company name is critical
 
 Return only valid JSON, no additional text."""
     
@@ -122,11 +136,16 @@ Return only valid JSON, no additional text."""
         return """You are an expert at analyzing job search emails. 
 Extract structured data from emails including:
 - Email type (application confirmation, rejection, assessment, interview, interaction, or other)
-- Company name
+- Company name (from email content, NOT job board names)
 - Position title (if mentioned)
-- Deadlines (if mentioned)
-- Action items
+- Technology stack/skills (if mentioned)
+- Where applied (job board name like "Indeed", "LinkedIn" if applicable, null if direct)
+- Applied date (when the application was submitted)
+- Contact information (email, phone number if mentioned)
+- Salary range (if mentioned)
+- Deadlines (for assessments/interviews if mentioned)
 - Confidence score (0.0-1.0) based on how certain you are about the classification
 
-Always return valid JSON format. Be precise and accurate in your analysis."""
+Always return valid JSON format. Be precise and accurate in your analysis.
+Extract company names from email content, not from job board sender domains."""
 

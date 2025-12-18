@@ -152,7 +152,8 @@ class AutoDetectedApplicationSerializer(serializers.ModelSerializer):
         model = AutoDetectedApplication
         fields = (
             'id', 'email_account', 'email_account_email', 'email_message_id',
-            'company_name', 'position', 'where_applied', 'confidence_score',
+            'company_name', 'position', 'stack', 'where_applied', 'applied_date',
+            'email', 'phone_number', 'salary_range', 'confidence_score',
             'status', 'detected_at', 'reviewed_at',
             'merged_into_application', 'merged_application_id', 'merged_application_company'
         )

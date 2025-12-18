@@ -33,6 +33,7 @@ class EmailProcessor:
                 - subject: Email subject line
                 - body: Email body text
                 - from: Email sender address
+                - date: Email date (optional, for applied_date extraction)
                 
         Returns:
             dict with classification results including:
@@ -46,7 +47,8 @@ class EmailProcessor:
         pattern_result = self.parser.classify_email(
             subject=email_message.get('subject', ''),
             body=email_message.get('body', ''),
-            sender=email_message.get('from', '')
+            sender=email_message.get('from', ''),
+            email_date=email_message.get('date', '')
         )
         
         # Step 2: Use AI if needed (low confidence or needs_ai flag)
@@ -67,15 +69,13 @@ class EmailProcessor:
                     ai_result.get('type') != 'unknown' and
                     'error' not in ai_result):
                     # Normalize AI result to match pattern result structure
-                    # AI returns company_name, position, deadline directly
-                    # Pattern returns them in a 'data' dict
+                    # AI returns fields directly, Pattern returns them in a 'data' dict
                     ai_data = {}
-                    if 'company_name' in ai_result:
-                        ai_data['company_name'] = ai_result['company_name']
-                    if 'position' in ai_result:
-                        ai_data['position'] = ai_result['position']
-                    if 'deadline' in ai_result:
-                        ai_data['deadline'] = ai_result['deadline']
+                    # Extract all fields from AI result
+                    for field in ['company_name', 'position', 'stack', 'where_applied', 
+                                 'applied_date', 'email', 'phone_number', 'salary_range', 'deadline']:
+                        if field in ai_result:
+                            ai_data[field] = ai_result[field]
                     
                     return {
                         'type': ai_result.get('type'),
