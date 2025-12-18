@@ -12,6 +12,8 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 from pathlib import Path
 from datetime import timedelta
+import os
+from decouple import config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -146,6 +148,11 @@ CORS_ALLOWED_ORIGINS = [
 
 CORS_ALLOW_CREDENTIALS = True
 
+# Session configuration for OAuth flow
+SESSION_COOKIE_SAMESITE = 'Lax'  # Allow session cookies for OAuth redirects
+SESSION_COOKIE_SECURE = False  # Set to True in production with HTTPS
+SESSION_COOKIE_HTTPONLY = True
+
 # JWT configuration
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(hours=1),
@@ -182,4 +189,11 @@ except ImportError:
             'TIMEOUT': 300,  # Default timeout (5 minutes)
         }
     }
+
+# Gmail OAuth Configuration
+# Load from .env file (create .env from .env.example)
+# See GMAIL_OAUTH_SETUP.md for setup instructions
+GMAIL_OAUTH_CLIENT_ID = config('GMAIL_OAUTH_CLIENT_ID', default=None)
+GMAIL_OAUTH_CLIENT_SECRET = config('GMAIL_OAUTH_CLIENT_SECRET', default=None)
+GMAIL_OAUTH_REDIRECT_URI = config('GMAIL_OAUTH_REDIRECT_URI', default='http://localhost:8000/api/email-accounts/oauth/callback/')
 

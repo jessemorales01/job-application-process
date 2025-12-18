@@ -179,9 +179,16 @@ def initiate_oauth_flow(request):
         redirect_uri = request.query_params.get('redirect_uri')
         authorization_url, state = service.get_authorization_url(redirect_uri=redirect_uri)
         
-        # Store state in session for CSRF protection (optional)
+        # Store user_id in cache keyed by state (expires in 10 minutes)
+        # This works even when Google redirects directly to backend
+        from django.core.cache import cache
+        cache.set(f'oauth_user_{state}', request.user.id, timeout=600)  # 10 minutes
+        
+        # Also store in session as backup
         if hasattr(request, 'session'):
             request.session['oauth_state'] = state
+            request.session['oauth_user_id'] = request.user.id
+            request.session.save()
         
         return Response({
             'authorization_url': authorization_url,
@@ -195,23 +202,57 @@ def initiate_oauth_flow(request):
 
 
 @api_view(['GET'])
+@permission_classes([AllowAny])  # Allow unauthenticated access for OAuth callback
 def oauth_callback(request):
     """Handle OAuth callback and create/update email account"""
     from .services.gmail_oauth import GmailOAuthService
     from .models import EmailAccount
     from django.utils import timezone
+    from django.http import HttpResponseRedirect
     
     authorization_code = request.query_params.get('code')
     state = request.query_params.get('state')
     redirect_uri = request.query_params.get('redirect_uri')
     
     if not authorization_code:
-        return Response(
-            {'code': 'Authorization code is required'},
-            status=status.HTTP_400_BAD_REQUEST
-        )
+        # Redirect to frontend with error
+        frontend_url = 'http://localhost:5173/settings?oauth_error=Authorization code is required'
+        return HttpResponseRedirect(frontend_url)
+    
+    # Get user_id from cache (primary) or session (fallback)
+    from django.core.cache import cache
+    user_id = None
+    
+    # Try cache first (works even with direct redirects)
+    if state:
+        user_id = cache.get(f'oauth_user_{state}')
+    
+    # Fallback to session if cache doesn't work
+    if not user_id and hasattr(request, 'session'):
+        user_id = request.session.get('oauth_user_id')
+        stored_state = request.session.get('oauth_state')
+        
+        # Verify state matches (CSRF protection)
+        if state and state != stored_state:
+            frontend_url = 'http://localhost:5173/settings?oauth_error=Invalid state parameter'
+            return HttpResponseRedirect(frontend_url)
+    
+    if not user_id:
+        frontend_url = 'http://localhost:5173/settings?oauth_error=Session expired. Please try connecting again.'
+        return HttpResponseRedirect(frontend_url)
+    
+    # Clean up cache after use
+    if state:
+        cache.delete(f'oauth_user_{state}')
     
     try:
+        # Get user
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            frontend_url = 'http://localhost:5173/settings?oauth_error=User not found'
+            return HttpResponseRedirect(frontend_url)
+        
         service = GmailOAuthService()
         token_data = service.handle_callback(
             authorization_code=authorization_code,
@@ -230,9 +271,9 @@ def oauth_callback(request):
         
         # Get or create email account for user
         email_account, created = EmailAccount.objects.update_or_create(
-            user=request.user,
+            user=user,
             defaults={
-                'email': request.user.email or 'unknown@gmail.com',  # Will be updated from Gmail API later
+                'email': user.email or 'unknown@gmail.com',  # Will be updated from Gmail API later
                 'provider': 'gmail',
                 'access_token': token_data['access_token'],
                 'refresh_token': token_data.get('refresh_token', ''),
@@ -241,19 +282,20 @@ def oauth_callback(request):
             }
         )
         
-        return Response({
-            'id': email_account.id,
-            'email': email_account.email,
-            'provider': email_account.provider,
-            'is_active': email_account.is_active,
-            'created': created
-        }, status=status.HTTP_200_OK)
+        # Clear session data
+        if hasattr(request, 'session'):
+            request.session.pop('oauth_state', None)
+            request.session.pop('oauth_user_id', None)
+        
+        # Redirect to frontend with success
+        frontend_url = 'http://localhost:5173/settings?oauth_success=true'
+        return HttpResponseRedirect(frontend_url)
         
     except Exception as e:
-        return Response(
-            {'error': f'Failed to handle OAuth callback: {str(e)}'},
-            status=status.HTTP_400_BAD_REQUEST
-        )
+        # Redirect to frontend with error
+        error_msg = str(e).replace(' ', '%20')
+        frontend_url = f'http://localhost:5173/settings?oauth_error={error_msg}'
+        return HttpResponseRedirect(frontend_url)
 
 
 @api_view(['POST'])

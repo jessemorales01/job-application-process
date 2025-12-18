@@ -53,3 +53,8 @@ Thumbs.db
 .vs/
 *.vssidx
 *.sqlite
+
+# Environment variables
+.env
+.env.local
+.env.*.local

@@ -157,11 +157,13 @@ export default {
       this.connecting = true
       this.showError = false
       try {
-        // Get OAuth authorization URL with redirect_uri
-        const redirectUri = window.location.origin + '/settings'
+        // Get OAuth authorization URL
+        // The redirect_uri must be the backend callback URL (matches Google Cloud Console)
+        // The backend will handle the OAuth callback
+        const backendUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000'
         const response = await api.get('/email-accounts/oauth/initiate/', {
           params: {
-            redirect_uri: redirectUri
+            redirect_uri: `${backendUrl}/api/email-accounts/oauth/callback/`
           }
         })
         const { authorization_url } = response.data
@@ -175,40 +177,35 @@ export default {
       }
     },
     async handleOAuthCallback() {
-      // Check if we have OAuth callback parameters in URL
+      // Check if we have OAuth callback result in URL (from backend redirect)
       const urlParams = new URLSearchParams(window.location.search)
-      const code = urlParams.get('code')
-      const state = urlParams.get('state')
+      const oauthSuccess = urlParams.get('oauth_success')
+      const oauthError = urlParams.get('oauth_error')
 
-      if (code && state) {
-        this.connecting = true
+      if (oauthSuccess === 'true') {
+        // Backend successfully processed OAuth callback
+        this.connecting = false
         this.showError = false
-        try {
-          // Exchange authorization code for tokens
-          const response = await api.get('/email-accounts/oauth/callback/', {
-            params: {
-              code,
-              state,
-              redirect_uri: window.location.origin + '/settings'
-            }
-          })
+        
+        // Reload email account to show connected status
+        await this.loadEmailAccount()
 
-          // Reload email account to show connected status
-          await this.loadEmailAccount()
+        // Show success message
+        this.showSuccess = true
+        this.successMessage = 'Email account connected successfully!'
 
-          // Show success message
-          this.showSuccess = true
-          this.successMessage = 'Email account connected successfully!'
+        // Clean up URL parameters
+        window.history.replaceState({}, document.title, '/settings')
+      } else if (oauthError) {
+        // Backend returned an error
+        this.connecting = false
+        this.showError = true
+        this.errorMessage = decodeURIComponent(oauthError)
 
-          // Clean up URL parameters
-          window.history.replaceState({}, document.title, '/settings')
-        } catch (error) {
-          this.showError = true
-          this.errorMessage = formatErrorMessage(error)
-        } finally {
-          this.connecting = false
-        }
+        // Clean up URL parameters
+        window.history.replaceState({}, document.title, '/settings')
       }
+      // If neither parameter exists, this is not an OAuth callback
     },
     async disconnectEmail() {
       if (!this.emailAccount) return
