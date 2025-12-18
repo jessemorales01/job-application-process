@@ -3432,3 +3432,187 @@ class AutoDetectedApplicationAPITests(APITestCase):
         # Verify reviewed_at was set
         self.detected_app1.refresh_from_db()
         self.assertIsNotNone(self.detected_app1.reviewed_at)
+
+
+class EmailSyncCommandTests(TestCase):
+    """Test email sync management command"""
+    
+    def setUp(self):
+        """Set up test users and email accounts"""
+        from crm.models import EmailAccount
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        self.user1 = User.objects.create_user(
+            username='testuser1',
+            password='testpass123'
+        )
+        self.user2 = User.objects.create_user(
+            username='testuser2',
+            password='testpass123'
+        )
+        
+        # Create active email account
+        self.active_account = EmailAccount.objects.create(
+            user=self.user1,
+            email='active@gmail.com',
+            provider='gmail',
+            access_token='test_token',
+            refresh_token='test_refresh',
+            token_expires_at=timezone.now() + timedelta(hours=1),
+            is_active=True
+        )
+        
+        # Create inactive email account
+        self.inactive_account = EmailAccount.objects.create(
+            user=self.user2,
+            email='inactive@gmail.com',
+            provider='gmail',
+            access_token='test_token',
+            refresh_token='test_refresh',
+            token_expires_at=timezone.now() + timedelta(hours=1),
+            is_active=False
+        )
+    
+    @patch('crm.services.email_sync_service.EmailSyncService')
+    def test_sync_all_active_accounts_command(self, mock_sync_service_class):
+        """Test that management command syncs all active accounts"""
+        from io import StringIO
+        from django.core.management import call_command
+        
+        # Mock sync service
+        mock_sync_service = mock_sync_service_class.return_value
+        mock_sync_service.sync_all_active_accounts.return_value = {
+            'accounts_processed': 1,
+            'accounts_succeeded': 1,
+            'accounts_failed': 0,
+            'total_emails_processed': 5,
+            'total_detected_created': 2,
+            'errors': []
+        }
+        
+        # Capture command output
+        out = StringIO()
+        
+        # Call management command
+        call_command('sync_emails', stdout=out)
+        
+        # Verify sync service was called
+        mock_sync_service_class.assert_called_once()
+        mock_sync_service.sync_all_active_accounts.assert_called_once()
+        
+        # Verify output contains success message
+        output = out.getvalue()
+        self.assertIn('Email sync completed', output)
+        self.assertIn('1 account(s) processed', output)
+    
+    @patch('crm.services.email_sync_service.EmailSyncService')
+    def test_sync_only_active_accounts(self, mock_sync_service_class):
+        """Test that only active email accounts are synced"""
+        from io import StringIO
+        from django.core.management import call_command
+        
+        # Mock sync service
+        mock_sync_service = mock_sync_service_class.return_value
+        mock_sync_service.sync_all_active_accounts.return_value = {
+            'accounts_processed': 1,
+            'accounts_succeeded': 1,
+            'accounts_failed': 0,
+            'total_emails_processed': 0,
+            'total_detected_created': 0,
+            'errors': []
+        }
+        
+        # Call management command
+        call_command('sync_emails', stdout=StringIO())
+        
+        # Verify sync_all_active_accounts was called (which filters by is_active=True)
+        mock_sync_service.sync_all_active_accounts.assert_called_once()
+    
+    @patch('crm.services.email_sync_service.EmailSyncService')
+    def test_sync_command_handles_errors(self, mock_sync_service_class):
+        """Test that management command handles sync errors gracefully"""
+        from io import StringIO
+        from django.core.management import call_command
+        
+        # Mock sync service with errors
+        mock_sync_service = mock_sync_service_class.return_value
+        mock_sync_service.sync_all_active_accounts.return_value = {
+            'accounts_processed': 2,
+            'accounts_succeeded': 1,
+            'accounts_failed': 1,
+            'total_emails_processed': 3,
+            'total_detected_created': 1,
+            'errors': [
+                {
+                    'account_id': self.inactive_account.id,
+                    'email': 'inactive@gmail.com',
+                    'error': 'Gmail API error'
+                }
+            ]
+        }
+        
+        # Capture command output
+        out = StringIO()
+        
+        # Call management command
+        call_command('sync_emails', stdout=out)
+        
+        # Verify output contains error information
+        output = out.getvalue()
+        self.assertIn('1 account(s) failed', output)
+        self.assertIn('Gmail API error', output)
+    
+    @patch('crm.services.email_sync_service.EmailSyncService')
+    def test_sync_command_with_no_active_accounts(self, mock_sync_service_class):
+        """Test management command when no active accounts exist"""
+        from io import StringIO
+        from django.core.management import call_command
+        
+        # Deactivate all accounts
+        self.active_account.is_active = False
+        self.active_account.save()
+        
+        # Mock sync service
+        mock_sync_service = mock_sync_service_class.return_value
+        mock_sync_service.sync_all_active_accounts.return_value = {
+            'accounts_processed': 0,
+            'accounts_succeeded': 0,
+            'accounts_failed': 0,
+            'total_emails_processed': 0,
+            'total_detected_created': 0,
+            'errors': []
+        }
+        
+        # Capture command output
+        out = StringIO()
+        
+        # Call management command
+        call_command('sync_emails', stdout=out)
+        
+        # Verify output indicates no accounts to sync
+        output = out.getvalue()
+        self.assertIn('0 account(s) processed', output)
+    
+    @patch('crm.services.email_sync_service.EmailSyncService')
+    def test_sync_command_with_max_results_parameter(self, mock_sync_service_class):
+        """Test that management command accepts max_results parameter"""
+        from io import StringIO
+        from django.core.management import call_command
+        
+        # Mock sync service
+        mock_sync_service = mock_sync_service_class.return_value
+        mock_sync_service.sync_all_active_accounts.return_value = {
+            'accounts_processed': 1,
+            'accounts_succeeded': 1,
+            'accounts_failed': 0,
+            'total_emails_processed': 10,
+            'total_detected_created': 3,
+            'errors': []
+        }
+        
+        # Call management command with max_results
+        call_command('sync_emails', max_results=100, stdout=StringIO())
+        
+        # Verify sync_all_active_accounts was called with max_results
+        mock_sync_service.sync_all_active_accounts.assert_called_once_with(max_results_per_account=100)
