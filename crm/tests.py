@@ -3474,7 +3474,7 @@ class EmailSyncCommandTests(TestCase):
             is_active=False
         )
     
-    @patch('crm.services.email_sync_service.EmailSyncService')
+    @patch('crm.management.commands.sync_emails.EmailSyncService')
     def test_sync_all_active_accounts_command(self, mock_sync_service_class):
         """Test that management command syncs all active accounts"""
         from io import StringIO
@@ -3506,7 +3506,7 @@ class EmailSyncCommandTests(TestCase):
         self.assertIn('Email sync completed', output)
         self.assertIn('1 account(s) processed', output)
     
-    @patch('crm.services.email_sync_service.EmailSyncService')
+    @patch('crm.management.commands.sync_emails.EmailSyncService')
     def test_sync_only_active_accounts(self, mock_sync_service_class):
         """Test that only active email accounts are synced"""
         from io import StringIO
@@ -3529,7 +3529,7 @@ class EmailSyncCommandTests(TestCase):
         # Verify sync_all_active_accounts was called (which filters by is_active=True)
         mock_sync_service.sync_all_active_accounts.assert_called_once()
     
-    @patch('crm.services.email_sync_service.EmailSyncService')
+    @patch('crm.management.commands.sync_emails.EmailSyncService')
     def test_sync_command_handles_errors(self, mock_sync_service_class):
         """Test that management command handles sync errors gracefully"""
         from io import StringIO
@@ -3563,7 +3563,7 @@ class EmailSyncCommandTests(TestCase):
         self.assertIn('1 account(s) failed', output)
         self.assertIn('Gmail API error', output)
     
-    @patch('crm.services.email_sync_service.EmailSyncService')
+    @patch('crm.management.commands.sync_emails.EmailSyncService')
     def test_sync_command_with_no_active_accounts(self, mock_sync_service_class):
         """Test management command when no active accounts exist"""
         from io import StringIO
@@ -3594,7 +3594,7 @@ class EmailSyncCommandTests(TestCase):
         output = out.getvalue()
         self.assertIn('0 account(s) processed', output)
     
-    @patch('crm.services.email_sync_service.EmailSyncService')
+    @patch('crm.management.commands.sync_emails.EmailSyncService')
     def test_sync_command_with_max_results_parameter(self, mock_sync_service_class):
         """Test that management command accepts max_results parameter"""
         from io import StringIO
