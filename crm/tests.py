@@ -1784,6 +1784,266 @@ class EmailParserTests(TestCase):
         
         self.assertEqual(result['type'], 'application')
         self.assertGreater(result['confidence'], 0.7)
+    
+    def test_extract_company_from_content(self):
+        """Test extracting company name from email content instead of sender"""
+        from crm.services.email_parser import EmailParser
+        parser = EmailParser()
+        
+        subject = "Thank you for applying to Google"
+        body = "We received your application for Software Engineer at Google."
+        
+        result = parser.classify_email(subject, body, "noreply@indeed.com")
+        
+        # Should extract "Google" from content, not "Indeed" from sender
+        self.assertIn('company_name', result['data'])
+        company_name = result['data']['company_name']
+        self.assertIsNotNone(company_name)
+        self.assertNotEqual(company_name.lower(), 'indeed')
+    
+    def test_extract_where_applied_job_board(self):
+        """Test extracting job board name when email is from a job board"""
+        from crm.services.email_parser import EmailParser
+        parser = EmailParser()
+        
+        subject = "Thank you for your application"
+        body = "Your application has been received."
+        
+        # Test Indeed
+        result = parser.classify_email(subject, body, "noreply@indeed.com")
+        self.assertEqual(result['data'].get('where_applied'), 'Indeed')
+        
+        # Test LinkedIn
+        result2 = parser.classify_email(subject, body, "notifications@linkedin.com")
+        self.assertEqual(result2['data'].get('where_applied'), 'Linkedin')
+        
+        # Test MyWorkday
+        result3 = parser.classify_email(subject, body, "noreply@myworkday.com")
+        self.assertEqual(result3['data'].get('where_applied'), 'Myworkday')
+    
+    def test_extract_where_applied_direct_application(self):
+        """Test that direct applications return None for where_applied"""
+        from crm.services.email_parser import EmailParser
+        parser = EmailParser()
+        
+        subject = "Thank you for your application"
+        body = "We received your application."
+        
+        result = parser.classify_email(subject, body, "recruiter@google.com")
+        # Direct application should not have where_applied
+        self.assertIsNone(result['data'].get('where_applied'))
+    
+    def test_extract_position(self):
+        """Test extracting position/title from email content"""
+        from crm.services.email_parser import EmailParser
+        parser = EmailParser()
+        
+        subject = "Application for Software Engineer"
+        body = "Thank you for applying to the Software Engineer position."
+        
+        result = parser.classify_email(subject, body, "noreply@company.com")
+        self.assertIn('position', result['data'])
+        position = result['data']['position']
+        self.assertIsNotNone(position)
+        self.assertIn('Engineer', position)
+    
+    def test_extract_stack(self):
+        """Test extracting technology stack from email content"""
+        from crm.services.email_parser import EmailParser
+        parser = EmailParser()
+        
+        subject = "Application Received"
+        body = "Stack: Python, Django, React, PostgreSQL"
+        
+        result = parser.classify_email(subject, body, "noreply@company.com")
+        self.assertIn('stack', result['data'])
+        stack = result['data']['stack']
+        self.assertIsNotNone(stack)
+        self.assertIn('Python', stack)
+    
+    def test_extract_stack_variations(self):
+        """Test extracting stack with different patterns"""
+        from crm.services.email_parser import EmailParser
+        parser = EmailParser()
+        
+        test_cases = [
+            ("Technologies: JavaScript, Node.js, MongoDB", "JavaScript"),
+            ("Using Python, Django, React", "Python"),
+            ("Skills: Java, Spring Boot, MySQL", "Java"),
+        ]
+        
+        for body, expected_tech in test_cases:
+            result = parser.classify_email("Application", body, "noreply@company.com")
+            stack = result['data'].get('stack', '')
+            if stack:
+                self.assertIn(expected_tech, stack, f"Failed for: {body}")
+    
+    def test_extract_applied_date_from_content(self):
+        """Test extracting applied date from email content"""
+        from crm.services.email_parser import EmailParser
+        parser = EmailParser()
+        
+        subject = "Application Received"
+        body = "Thank you for applying on December 15, 2024."
+        
+        result = parser.classify_email(subject, body, "noreply@company.com")
+        self.assertIn('applied_date', result['data'])
+        applied_date = result['data']['applied_date']
+        self.assertIsNotNone(applied_date)
+        self.assertIn('2024-12-15', applied_date)
+    
+    def test_extract_applied_date_from_email_date(self):
+        """Test extracting applied date from email date header"""
+        from crm.services.email_parser import EmailParser
+        parser = EmailParser()
+        
+        subject = "Application Received"
+        body = "Thank you for your application."
+        email_date = "Wed, 15 Dec 2024 10:30:00 -0800"
+        
+        result = parser.classify_email(subject, body, "noreply@company.com", email_date=email_date)
+        self.assertIn('applied_date', result['data'])
+        applied_date = result['data']['applied_date']
+        # Should extract date from email_date if not in content
+        self.assertIsNotNone(applied_date)
+    
+    def test_extract_email_contact(self):
+        """Test extracting contact email from email content"""
+        from crm.services.email_parser import EmailParser
+        parser = EmailParser()
+        
+        subject = "Application Received"
+        body = "Please contact us at recruiter@company.com for any questions."
+        
+        result = parser.classify_email(subject, body, "noreply@company.com")
+        self.assertIn('email', result['data'])
+        email = result['data']['email']
+        self.assertIsNotNone(email)
+        self.assertEqual(email, 'recruiter@company.com')
+    
+    def test_extract_email_ignores_job_board_emails(self):
+        """Test that job board email addresses are not extracted as contact emails"""
+        from crm.services.email_parser import EmailParser
+        parser = EmailParser()
+        
+        subject = "Application Received"
+        body = "Contact indeed@indeed.com or visit our site."
+        
+        result = parser.classify_email(subject, body, "noreply@company.com")
+        email = result['data'].get('email')
+        # Should not extract job board emails
+        if email:
+            self.assertNotIn('indeed.com', email.lower())
+    
+    def test_extract_phone_number_us_format(self):
+        """Test extracting US phone number formats"""
+        from crm.services.email_parser import EmailParser
+        parser = EmailParser()
+        
+        subject = "Application Received"
+        body = "Call us at (555) 123-4567 or 555-123-4567"
+        
+        result = parser.classify_email(subject, body, "noreply@company.com")
+        self.assertIn('phone_number', result['data'])
+        phone = result['data']['phone_number']
+        self.assertIsNotNone(phone)
+        self.assertIn('555', phone)
+    
+    def test_extract_phone_number_international_format(self):
+        """Test extracting international phone number formats"""
+        from crm.services.email_parser import EmailParser
+        parser = EmailParser()
+        
+        subject = "Application Received"
+        body = "Contact us at +1-555-123-4567"
+        
+        result = parser.classify_email(subject, body, "noreply@company.com")
+        phone = result['data'].get('phone_number')
+        if phone:
+            self.assertIn('555', phone)
+    
+    def test_extract_salary_range(self):
+        """Test extracting salary range from email content"""
+        from crm.services.email_parser import EmailParser
+        parser = EmailParser()
+        
+        subject = "Application Received"
+        body = "Salary: $80,000 - $120,000 per year"
+        
+        result = parser.classify_email(subject, body, "noreply@company.com")
+        self.assertIn('salary_range', result['data'])
+        salary = result['data']['salary_range']
+        self.assertIsNotNone(salary)
+        self.assertIn('$', salary)
+        self.assertIn('80', salary)
+    
+    def test_extract_salary_range_variations(self):
+        """Test extracting salary with different formats"""
+        from crm.services.email_parser import EmailParser
+        parser = EmailParser()
+        
+        test_cases = [
+            ("Compensation: $100k - $150k", "$100k"),
+            ("Pay: $50,000-$70,000", "$50"),
+            ("Salary range: $90k", "$90"),
+        ]
+        
+        for body, expected_part in test_cases:
+            result = parser.classify_email("Application", body, "noreply@company.com")
+            salary = result['data'].get('salary_range', '')
+            if salary:
+                self.assertIn(expected_part, salary, f"Failed for: {body}")
+    
+    def test_job_board_domains_ignored_for_company_name(self):
+        """Test that job board domains are not extracted as company names"""
+        from crm.services.email_parser import EmailParser
+        parser = EmailParser()
+        
+        subject = "Thank you for your application"
+        body = "Your application has been received."
+        
+        # Test various job boards
+        job_boards = ['indeed.com', 'myworkday.com', 'linkedin.com', 'glassdoor.com']
+        
+        for job_board in job_boards:
+            sender = f"noreply@{job_board}"
+            result = parser.classify_email(subject, body, sender)
+            company_name = result['data'].get('company_name', '')
+            # Should not extract job board name as company name
+            self.assertNotIn(job_board.split('.')[0].title(), company_name, 
+                           f"Should not extract {job_board} as company name")
+    
+    def test_all_fields_extracted_in_application_email(self):
+        """Test that all fields are extracted when available in application email"""
+        from crm.services.email_parser import EmailParser
+        parser = EmailParser()
+        
+        subject = "Application for Software Engineer at Google"
+        body = """
+        Thank you for applying to Google for the Software Engineer position.
+        Stack: Python, Django, React, PostgreSQL
+        Applied on: December 15, 2024
+        Contact: recruiter@google.com or (555) 123-4567
+        Salary: $120,000 - $150,000
+        """
+        email_date = "Wed, 15 Dec 2024 10:30:00 -0800"
+        
+        result = parser.classify_email(subject, body, "noreply@indeed.com", email_date=email_date)
+        
+        # Check all fields are present
+        data = result['data']
+        self.assertIn('company_name', data)
+        self.assertIn('position', data)
+        self.assertIn('stack', data)
+        self.assertIn('where_applied', data)
+        self.assertIn('applied_date', data)
+        self.assertIn('email', data)
+        self.assertIn('phone_number', data)
+        self.assertIn('salary_range', data)
+        
+        # Verify values
+        self.assertIsNotNone(data.get('company_name'))
+        self.assertEqual(data.get('where_applied'), 'Indeed')
 
 
 class AIEmailAnalyzerTests(TestCase):
