@@ -26,18 +26,19 @@ class GmailService:
     
     def _build_service(self):
         """Build Gmail API service with OAuth credentials"""
-        # Check if token is expired and refresh if needed
-        if self.email_account.token_expires_at and self.email_account.token_expires_at <= timezone.now():
-            # Token is expired, should refresh (this will be handled by sync service)
-            pass
+        # Validate that we have required tokens
+        if not self.email_account.access_token:
+            raise ValueError("Access token is missing")
         
         # Create credentials from stored tokens
+        # Note: client_id and client_secret are not needed for API calls,
+        # but refresh_token is needed for automatic token refresh
         credentials = Credentials(
             token=self.email_account.access_token,
-            refresh_token=self.email_account.refresh_token,
+            refresh_token=self.email_account.refresh_token or None,
             token_uri='https://oauth2.googleapis.com/token',
-            client_id=None,  # Not needed for API calls
-            client_secret=None,  # Not needed for API calls
+            # client_id and client_secret are not stored in EmailAccount for security
+            # Token refresh is handled by EmailSyncService before building the service
         )
         
         # Build Gmail API service
@@ -139,6 +140,7 @@ class GmailService:
         """
         Extract email body from payload.
         Handles both plain text and HTML emails, with multipart support.
+        For HTML emails, extracts text content (strips HTML tags).
         
         Args:
             payload: Gmail API payload object
@@ -146,7 +148,10 @@ class GmailService:
         Returns:
             str: Email body text
         """
+        import re
+        
         body_text = ''
+        html_text = ''
         
         # Check if multipart
         if 'parts' in payload:
@@ -157,18 +162,60 @@ class GmailService:
                     if data:
                         body_text = base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')
                         break
-                # Fallback to text/html if no plain text
-                elif part.get('mimeType') == 'text/html' and not body_text:
+                # Also collect HTML for fallback
+                elif part.get('mimeType') == 'text/html':
                     data = part.get('body', {}).get('data', '')
                     if data:
-                        body_text = base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')
+                        html_text = base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')
         else:
             # Single part message
             mime_type = payload.get('mimeType', '')
-            if mime_type in ['text/plain', 'text/html']:
+            if mime_type == 'text/plain':
                 data = payload.get('body', {}).get('data', '')
                 if data:
                     body_text = base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')
+            elif mime_type == 'text/html':
+                data = payload.get('body', {}).get('data', '')
+                if data:
+                    html_text = base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')
         
-        return body_text
+        # If we have plain text, use it
+        if body_text:
+            return body_text
+        
+        # If we only have HTML, extract text from it
+        if html_text:
+            # Remove script and style tags and their content
+            html_text = re.sub(r'<script[^>]*>.*?</script>', '', html_text, flags=re.DOTALL | re.IGNORECASE)
+            html_text = re.sub(r'<style[^>]*>.*?</style>', '', html_text, flags=re.DOTALL | re.IGNORECASE)
+            # Remove HTML comments
+            html_text = re.sub(r'<!--.*?-->', '', html_text, flags=re.DOTALL)
+            # Remove HTML tags but preserve line breaks for readability
+            html_text = re.sub(r'<br\s*/?>', '\n', html_text, flags=re.IGNORECASE)
+            html_text = re.sub(r'<p[^>]*>', '\n', html_text, flags=re.IGNORECASE)
+            html_text = re.sub(r'</p>', '\n', html_text, flags=re.IGNORECASE)
+            html_text = re.sub(r'<div[^>]*>', '\n', html_text, flags=re.IGNORECASE)
+            html_text = re.sub(r'</div>', '\n', html_text, flags=re.IGNORECASE)
+            # Remove all other HTML tags
+            html_text = re.sub(r'<[^>]+>', ' ', html_text)
+            # Decode common HTML entities
+            import html
+            try:
+                html_text = html.unescape(html_text)
+            except:
+                # Fallback manual decoding
+                html_text = html_text.replace('&nbsp;', ' ')
+                html_text = html_text.replace('&amp;', '&')
+                html_text = html_text.replace('&lt;', '<')
+                html_text = html_text.replace('&gt;', '>')
+                html_text = html_text.replace('&quot;', '"')
+                html_text = html_text.replace('&#39;', "'")
+                html_text = html_text.replace('&apos;', "'")
+            # Remove excessive whitespace and special characters
+            html_text = re.sub(r'[\u200b-\u200f\u202a-\u202e]', '', html_text)  # Remove zero-width and directional chars
+            html_text = re.sub(r'\s+', ' ', html_text)  # Normalize whitespace
+            html_text = html_text.strip()
+            return html_text
+        
+        return ''
 

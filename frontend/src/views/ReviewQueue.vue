@@ -235,6 +235,12 @@ export default {
         
         // Reload list
         await this.loadDetectedItems()
+        
+        // Navigate to Applications page to see the new application
+        // Use setTimeout to allow success message to be visible briefly
+        setTimeout(() => {
+          this.$router.push('/applications')
+        }, 1500)
       } catch (error) {
         this.showError = true
         this.errorMessage = formatErrorMessage(error)

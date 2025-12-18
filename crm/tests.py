@@ -2497,11 +2497,18 @@ class EmailProcessorTests(TestCase):
         self.assertEqual(result['confidence'], 0.95)
     
     @patch('crm.services.email_processor.AIEmailAnalyzer')
-    def test_skips_ai_for_high_confidence_pattern_matches(self, mock_ai_class):
-        """Test that AI is not called for high-confidence pattern matches"""
+    def test_uses_ai_for_application_emails(self, mock_ai_class):
+        """Test that AI is always used for application emails for better accuracy"""
         from crm.services.email_processor import EmailProcessor
         
         mock_ai_instance = Mock()
+        mock_ai_instance.analyze_email.return_value = {
+            'type': 'application_confirmation',
+            'confidence': 0.95,
+            'company_name': 'Google',
+            'position': 'Software Engineer',
+            'applied_date': '2024-01-01'
+        }
         mock_ai_class.return_value = mock_ai_instance
         
         email = {
@@ -2513,10 +2520,14 @@ class EmailProcessorTests(TestCase):
         processor = EmailProcessor()
         result = processor.process_email(email)
         
-        # AI should not be called
-        mock_ai_instance.analyze_email.assert_not_called()
-        self.assertEqual(result['source'], 'pattern')
-        self.assertFalse(result.get('used_ai', False))
+        # AI should be called for application emails
+        mock_ai_instance.analyze_email.assert_called_once()
+        
+        # Should return AI result
+        self.assertEqual(result['type'], 'application')
+        self.assertEqual(result['source'], 'ai')
+        self.assertTrue(result.get('used_ai', False))
+        self.assertEqual(result['data']['company_name'], 'Google')
     
     def test_returns_combined_result_structure(self):
         """Test that process_email returns correct structure"""
@@ -3386,13 +3397,13 @@ class EmailSyncServiceTests(TestCase):
                 'type': 'rejection',
                 'confidence': 0.80,
                 'source': 'pattern',
-                'data': {'company_name': 'Company'}
+                'data': {'company_name': 'Microsoft'}  # Changed from 'Company' to valid company name
             },
             {
                 'type': 'assessment',
                 'confidence': 0.75,
                 'source': 'pattern',
-                'data': {'company_name': 'Company', 'deadline': '2024-12-31'}
+                'data': {'company_name': 'Amazon', 'deadline': '2024-12-31'}  # Changed from 'Company' to valid company name
             }
         ]
         mock_processor_class.return_value = mock_processor_instance
@@ -3401,13 +3412,68 @@ class EmailSyncServiceTests(TestCase):
         result = sync_service.sync_emails_for_account(self.email_account)
         
         self.assertEqual(result['processed'], 3)
-        self.assertEqual(result['created'], 3)
+        # Rejection email will be skipped if company doesn't have existing application
+        # So we expect 2 created (application + assessment), 1 skipped (rejection without existing app)
+        self.assertEqual(result['created'], 2)
+        self.assertEqual(result['skipped'], 1)
         
-        # Verify all three were created
+        # Verify only application and assessment were created (rejection skipped)
         detected_count = AutoDetectedApplication.objects.filter(
             email_account=self.email_account
         ).count()
-        self.assertEqual(detected_count, 3)
+        self.assertEqual(detected_count, 2)
+    
+    def test_sync_emails_processes_rejection_with_existing_application(self):
+        """Test that rejection emails are processed when company has existing application"""
+        from crm.models import Application, AutoDetectedApplication
+        from crm.services.email_sync_service import EmailSyncService
+        
+        # Create existing application for the company
+        Application.objects.create(
+            company_name='SentiLink',
+            position='Software Engineer',
+            created_by=self.email_account.user
+        )
+        
+        # Mock Gmail service
+        mock_emails = [
+            {
+                'id': 'msg1',
+                'subject': 'SentiLink Application Follow-up',
+                'body': 'Thank you for your interest in SentiLink! We\'ve decided to move forward with other candidates.',
+                'from': 'noreply@sentilink.com',
+                'date': '2024-01-01T10:00:00Z'
+            }
+        ]
+        
+        with patch('crm.services.email_sync_service.GmailService') as mock_gmail_class:
+            mock_gmail_instance = mock_gmail_class.return_value
+            mock_gmail_instance.fetch_recent_emails.return_value = mock_emails
+            
+            # Mock EmailProcessor to return rejection
+            with patch('crm.services.email_sync_service.EmailProcessor') as mock_processor_class:
+                mock_processor_instance = mock_processor_class.return_value
+                mock_processor_instance.process_email.return_value = {
+                    'type': 'rejection',
+                    'confidence': 0.80,
+                    'source': 'pattern',
+                    'data': {'company_name': 'SentiLink'}
+                }
+                
+                sync_service = EmailSyncService()
+                result = sync_service.sync_emails_for_account(self.email_account)
+                
+                # Should create the rejection because company has existing application
+                self.assertEqual(result['processed'], 1)
+                self.assertEqual(result['created'], 1)
+                self.assertEqual(result['skipped'], 0)
+                
+                # Verify rejection was created
+                detected_count = AutoDetectedApplication.objects.filter(
+                    email_account=self.email_account,
+                    company_name='SentiLink'
+                ).count()
+                self.assertEqual(detected_count, 1)
 
 
 class AutoDetectedApplicationAPITests(APITestCase):

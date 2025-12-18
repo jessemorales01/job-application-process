@@ -46,6 +46,33 @@ class EmailSyncService:
                 'message': 'Email account is not active'
             }
         
+        # Check if token needs refresh before initializing services
+        from django.utils import timezone
+        from crm.services.gmail_oauth import GmailOAuthService
+        
+        if (email_account.token_expires_at and 
+            email_account.token_expires_at <= timezone.now() and 
+            email_account.refresh_token):
+            try:
+                # Refresh the access token
+                oauth_service = GmailOAuthService()
+                token_data = oauth_service.refresh_access_token(email_account)
+                
+                # Update email account with new token
+                email_account.access_token = token_data['access_token']
+                if token_data.get('expires_at'):
+                    from datetime import datetime
+                    try:
+                        expires_at = datetime.fromisoformat(token_data['expires_at'].replace('Z', '+00:00'))
+                        email_account.token_expires_at = expires_at
+                    except (ValueError, AttributeError):
+                        from datetime import timedelta
+                        email_account.token_expires_at = timezone.now() + timedelta(hours=1)
+                email_account.save()
+            except Exception as e:
+                # If refresh fails, raise error
+                raise Exception(f"Failed to refresh access token: {str(e)}")
+        
         # Initialize services
         gmail_service = GmailService(email_account)
         email_processor = EmailProcessor()
@@ -104,14 +131,39 @@ class EmailSyncService:
                         # Extract all available fields
                         company_name = data.get('company_name')
                         
-                        # Company name is REQUIRED - skip if not found
-                        if not company_name or company_name.strip() == '' or company_name.lower() == 'unknown company':
+                        # Company name is REQUIRED - skip if not found or invalid
+                        # Filter out obviously invalid names
+                        invalid_names = (
+                            '', 'unknown', 'unknown company', 'n/a', 'none', 
+                            'congratulations', 'thank you', 'thanks', 'hi', 'dear',
+                            'hello', 'greetings', 'application', 'job', 'position',
+                            'role', 'opportunity', 'company', 'employer'
+                        )
+                        
+                        if (not company_name or 
+                            company_name.strip() == '' or 
+                            company_name.lower() in invalid_names or
+                            len(company_name.strip()) < 2):
                             stats['skipped'] += 1
                             continue
                         
+                        # For rejection emails: only process if company already has an application
+                        if email_type == 'rejection':
+                            from crm.models import Application
+                            # Check if this company has an existing application
+                            existing_app = Application.objects.filter(
+                                company_name__iexact=company_name,
+                                created_by=email_account.user
+                            ).exists()
+                            
+                            if not existing_app:
+                                # Skip rejection emails for companies without existing applications
+                                stats['skipped'] += 1
+                                continue
+                        
                         position = data.get('position', '')
                         stack = data.get('stack', '')
-                        where_applied = data.get('where_applied', '')
+                        where_applied = data.get('where_applied') or ''  # Ensure it's a string, not None
                         applied_date = data.get('applied_date')
                         email_contact = data.get('email', '')
                         phone_number = data.get('phone_number', '')
@@ -134,21 +186,40 @@ class EmailSyncService:
                             except (ValueError, TypeError):
                                 applied_date = None
                         
+                        # Determine detected_at: use email date if available, otherwise use current time
+                        detected_at = timezone.now()
+                        if email.get('date'):
+                            try:
+                                from dateutil import parser as date_parser
+                                email_datetime = date_parser.parse(email['date'])
+                                # Make timezone-aware if it's naive
+                                if timezone.is_naive(email_datetime):
+                                    detected_at = timezone.make_aware(email_datetime)
+                                else:
+                                    detected_at = email_datetime
+                            except (ValueError, TypeError):
+                                # If parsing fails, use current time (already set)
+                                pass
+                        
                         # Create AutoDetectedApplication with all extracted fields
-                        AutoDetectedApplication.objects.create(
+                        # Ensure all string fields are empty strings, not None
+                        # Note: We need to set detected_at explicitly since auto_now_add won't work if we pass it
+                        detected_app = AutoDetectedApplication(
                             email_account=email_account,
                             email_message_id=email['id'],
                             company_name=company_name,
-                            position=position,
-                            stack=stack,
-                            where_applied=where_applied,
+                            position=position or '',
+                            stack=stack or '',
+                            where_applied=where_applied or '',
                             applied_date=applied_date,
-                            email=email_contact,
-                            phone_number=phone_number,
-                            salary_range=salary_range,
+                            email=email_contact or '',
+                            phone_number=phone_number or '',
+                            salary_range=salary_range or '',
                             confidence_score=result.get('confidence', 0.0),
-                            status='pending'
+                            status='pending',
+                            detected_at=detected_at
                         )
+                        detected_app.save()  # Save explicitly to set detected_at
                         
                         stats['created'] += 1
                     else:

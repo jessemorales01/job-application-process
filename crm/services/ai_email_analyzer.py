@@ -5,6 +5,7 @@ Uses OpenAI GPT-3.5-turbo to analyze uncertain emails that pattern matching
 couldn't classify with high confidence. Includes caching to reduce API costs.
 """
 import json
+import re
 import openai
 from openai import OpenAI
 from django.conf import settings
@@ -71,7 +72,21 @@ class AIEmailAnalyzer:
             )
             
             # Parse JSON response
-            result = json.loads(response.choices[0].message.content)
+            content = response.choices[0].message.content.strip()
+            
+            # Try to extract JSON if response has extra text
+            if content.startswith('```'):
+                # Remove markdown code blocks
+                content = re.sub(r'^```(?:json)?\s*', '', content, flags=re.MULTILINE)
+                content = re.sub(r'\s*```$', '', content, flags=re.MULTILINE)
+                content = content.strip()
+            
+            # Find JSON object in response (in case there's extra text)
+            json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', content, re.DOTALL)
+            if json_match:
+                content = json_match.group(0)
+            
+            result = json.loads(content)
             
             # Cache result for 24 hours (86400 seconds)
             cache.set(cache_key, result, 86400)
@@ -79,11 +94,15 @@ class AIEmailAnalyzer:
             return result
             
         except json.JSONDecodeError as e:
-            # Handle invalid JSON response
+            # Handle invalid JSON response - log the actual content for debugging
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"AI JSON decode error. Response: {response.choices[0].message.content[:500] if response.choices else 'No response'}")
+            
             return {
                 'type': 'unknown',
                 'confidence': 0.0,
-                'error': f'Invalid JSON response: {str(e)}'
+                'error': f'Invalid JSON response: {str(e)}. Response preview: {content[:200] if content else "Empty"}'
             }
         except Exception as e:
             # Log error and return fallback
@@ -120,14 +139,17 @@ Classify and extract JSON with all available information:
     "notes": "Any additional relevant information"
 }}
 
-Important:
-- company_name is REQUIRED - you MUST extract it from email content, NOT from job board sender domains (Indeed, LinkedIn, etc.)
-- If you cannot find a company name, return null for company_name (do not use "Unknown Company")
+CRITICAL RULES:
+- company_name MUST be a real company name (e.g., "Google", "Microsoft", "Samsara", "The RRS Group")
+- NEVER use generic words like "Unknown", "Congratulations", "Thank You", "Company", "Employer" as company_name
+- Extract company_name from email content, NOT from job board sender domains (Indeed, LinkedIn, etc.)
+- Look for patterns like "Thank you for applying to [Company]", "[Company] has received your application", "application to [Company]"
+- If you cannot find a real company name, set company_name to null (not "Unknown" or similar)
 - position should be present in almost all application emails - extract it if mentioned
 - applied_date should be present in almost all application emails - extract from email date header or content
 - If email is from a job board (indeed.com, linkedin.com, etc.), set where_applied to the board name
 - Only include fields that are actually mentioned in the email (use null for missing fields)
-- Be precise and accurate - company name is critical
+- Be precise and accurate - company_name is the most important field
 
 Return only valid JSON, no additional text."""
     

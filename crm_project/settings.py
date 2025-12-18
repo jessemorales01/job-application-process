@@ -197,3 +197,8 @@ GMAIL_OAUTH_CLIENT_ID = config('GMAIL_OAUTH_CLIENT_ID', default=None)
 GMAIL_OAUTH_CLIENT_SECRET = config('GMAIL_OAUTH_CLIENT_SECRET', default=None)
 GMAIL_OAUTH_REDIRECT_URI = config('GMAIL_OAUTH_REDIRECT_URI', default='http://localhost:8000/api/email-accounts/oauth/callback/')
 
+# OpenAI API Configuration
+# Get your API key from https://platform.openai.com/api-keys
+# Add it to your .env file as: OPENAI_API_KEY=sk-...
+OPENAI_API_KEY = config('OPENAI_API_KEY', default=None)
+

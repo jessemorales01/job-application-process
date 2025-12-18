@@ -8,10 +8,11 @@ class EmailParser:
     """Service for classifying emails using regex pattern matching"""
     
     APPLICATION_PATTERNS = [
-        r'thank you for (?:your )?application',
+        r'thank(?:s| you) for (?:your )?application',
+        r'thank(?:s| you) for applying',
         r'we received your application',
         r'application (?:has been )?submitted',
-        r'thank you for applying',
+        r'your application (?:has been )?received',
     ]
     
     REJECTION_PATTERNS = [
@@ -122,32 +123,70 @@ class EmailParser:
         
         # Common patterns for company name extraction (ordered by reliability)
         patterns = [
-            r'(?:thank you for|thanks for) (?:applying to|your application to|applying for) ([A-Z][a-zA-Z\s&]+?)(?:\.|,|$|\n|for|at)',
-            r'your application (?:to|for) ([A-Z][a-zA-Z\s&]+?)(?: (?:has been|was)|\.|,|$|\n)',
-            r'application (?:to|for) ([A-Z][a-zA-Z\s&]+?)(?: (?:has been|was) received|\.|,|$|\n)',
-            r'([A-Z][a-zA-Z\s&]+?) (?:has|have) received your application',
-            r'([A-Z][a-zA-Z\s&]+?) - (?:Application|Job Application|Job)',
-            r'position at ([A-Z][a-zA-Z\s&]+?)(?:\.|,|$|\n)',
-            r'role at ([A-Z][a-zA-Z\s&]+?)(?:\.|,|$|\n)',
-            r'opportunity at ([A-Z][a-zA-Z\s&]+?)(?:\.|,|$|\n)',
-            r'for (?:the )?([A-Z][a-zA-Z\s&]+?) (?:position|role|job)',
-            r'at ([A-Z][a-zA-Z\s&]+?)(?:\.|,|$|\n)',
-            # More aggressive patterns for job board emails
-            r'([A-Z][a-zA-Z\s&]{2,30}?) (?:application|position|role|job)(?: (?:has been|was))',
-            r'(?:from|with) ([A-Z][a-zA-Z\s&]{2,30}?)(?:\.|,|$|\n)',
+            # Application confirmation patterns - most specific first
+            # Try to capture full company name - use greedy matching but stop before "Hi", "Dear", or at punctuation
+            # Pattern: capture everything up to !, ., ,, or before "Hi"/"Dear"
+            r'thank(?:s| you) for applying to ([A-Z][a-zA-Z0-9\s&.,!-]+?)(?:\s*[!.,]|\s+Hi|\s+Dear|$|\n| -)',
+            r'thank(?:s| you) for applying at ([A-Z][a-zA-Z0-9\s&.,!-]+?)(?:\s*[!.,]|\s+Hi|\s+Dear|$|\n| -)',
+            r'thank(?:s| you) for (?:your )?application (?:to|at) ([A-Z][a-zA-Z0-9\s&.,!-]+?)(?:\s*[!.,]|\s+Hi|\s+Dear|$|\n| -)',
+            r'your application (?:to|for|at) ([A-Z][a-zA-Z0-9\s&.,!-]+?)(?: (?:has been|was)|\.|,|$|\n| -)',
+            r'application (?:to|for|at) ([A-Z][a-zA-Z0-9\s&.,!-]+?)(?: (?:has been|was) received|\.|,|$|\n| -)',
+            r'([A-Z][a-zA-Z0-9\s&.,!-]+?) (?:has|have) received your application',
+            r'([A-Z][a-zA-Z0-9\s&.,!-]+?) - (?:Application|Job Application|Job)',
+            # Rejection email patterns
+            r'thank(?:s| you) for your interest in ([A-Z][a-zA-Z0-9\s&.,!-]+?)(?:!|\.|,|$|\n)',
+            r'your interest in ([A-Z][a-zA-Z0-9\s&.,!-]+?)(?:!|\.|,|$|\n)',
+            r'([A-Z][a-zA-Z0-9\s&.,!-]+?) (?:Application|Application Follow-up)',
+            # Position/role patterns
+            r'position at ([A-Z][a-zA-Z0-9\s&.,!-]+?)(?:\.|,|$|\n)',
+            r'role at ([A-Z][a-zA-Z0-9\s&.,!-]+?)(?:\.|,|$|\n)',
+            r'opportunity at ([A-Z][a-zA-Z0-9\s&.,!-]+?)(?:\.|,|$|\n)',
+            r'for (?:the )?([A-Z][a-zA-Z0-9\s&.,!-]+?) (?:position|role|job)',
+            # More aggressive patterns (but avoid common phrases)
+            r'([A-Z][a-zA-Z0-9\s&.,!-]{2,30}?) (?:application|position|role|job)(?: (?:has been|was))',
         ]
         
         for pattern in patterns:
             match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
             if match:
                 company_name = match.group(1).strip()
-                # Clean up common prefixes/suffixes
+                
+                # Clean up: remove common prefixes/suffixes
                 company_name = re.sub(r'^(the|a|an)\s+', '', company_name, flags=re.IGNORECASE)
+                
+                # Stop at common words that indicate end of company name
+                # Split on words like "Hi", "Dear", "We", names, etc. that come after company name
+                # Also stop at common name patterns (Jesus, David, etc.)
+                stop_patterns = [
+                    r'\s+(?:Hi|Dear|We|Your|Our|The|A|An|This|That|Thank|Thanks)\s+',
+                    r'\s+(?:Jesus|David|John|Mary|Sarah|Mike|Chris|Alex)\s*[,!]?\s*',
+                    r'\s+[A-Z][a-z]+\s*[,!]?\s*$',  # Any capitalized word at the end (likely a name)
+                ]
+                for pattern in stop_patterns:
+                    match = re.search(pattern, company_name, re.IGNORECASE)
+                    if match:
+                        # Split at the match position
+                        company_name = company_name[:match.start()].strip()
+                        break
+                
+                # Clean up trailing punctuation but preserve LLC, Inc., Co., etc.
+                # Don't remove if it ends with LLC, Inc., Corp., Co., Ltd.
+                if not re.search(r'\b(LLC|Inc\.?|Corp\.?|Co\.?|Ltd\.?)\s*$', company_name, re.IGNORECASE):
+                    company_name = re.sub(r'[.,!]+$', '', company_name)  # Remove trailing punctuation
+                
                 company_name = company_name.strip()
                 
-                # Validate: should be reasonable length (2-50 chars) and not be a common word
+                # Validate: should be reasonable length (2-50 chars) and not be a common word/phrase
+                invalid_names = (
+                    'job', 'position', 'role', 'application', 'indeed', 'linkedin', 'myworkday',
+                    'this time', 'this point', 'this moment', 'that time', 'that point',
+                    'other applicants', 'other candidates', 'other people', 'other companies',
+                    'us', 'we', 'our', 'your', 'their', 'them', 'they', 'hi', 'dear',
+                    'thank you very much for your recent', 'thank you', 'thanks'
+                )
                 if (2 <= len(company_name) <= 50 and 
-                    not company_name.lower() in ('job', 'position', 'role', 'application', 'indeed', 'linkedin', 'myworkday')):
+                    company_name.lower() not in invalid_names and
+                    not company_name.lower().startswith(('this ', 'that ', 'other ', 'thank ', 'thanks ', 'hi ', 'dear '))):
                     return company_name
         
         return None
@@ -206,13 +245,19 @@ class EmailParser:
         
         # Common patterns for position extraction (ordered by reliability)
         patterns = [
-            r'position[:\s]+([A-Z][a-zA-Z\s&/]+?)(?:\.|,|$|\n|at|position)',
-            r'role[:\s]+([A-Z][a-zA-Z\s&/]+?)(?:\.|,|$|\n|at|role)',
-            r'application (?:for|to) (?:the )?([A-Z][a-zA-Z\s&/]+?)(?: (?:position|role|at)|\.|,|$|\n)',
-            r'([A-Z][a-zA-Z\s&/]+?) (?:position|role)(?:\.|,|$|\n)',
-            r'job[:\s]+([A-Z][a-zA-Z\s&/]+?)(?:\.|,|$|\n)',
-            r'for (?:the )?([A-Z][a-zA-Z\s&/]+?) (?:position|role|job)',
-            r'([A-Z][a-zA-Z\s&/]{3,50}?) (?:Engineer|Developer|Manager|Analyst|Designer|Specialist)',
+            # Most specific: "for the [Position Title] role/position"
+            r'for (?:the )?([A-Z][a-zA-Z\s&/()-,]+? (?:Engineer|Developer|Manager|Analyst|Designer|Specialist|Architect|Lead|Senior|Junior|Early Career|II|III|IV|Platform|Backend|Frontend|Full Stack))(?:\s+(?:role|position|job))',
+            # "application for [Position Title]"
+            r'application (?:for|to) (?:the )?([A-Z][a-zA-Z\s&/()-,]+? (?:Engineer|Developer|Manager|Analyst|Designer|Specialist|Architect|Lead|Senior|Junior|Early Career|II|III|IV|Platform|Backend|Frontend|Full Stack))',
+            # "role of [Position Title]"
+            r'role (?:of|at) ([A-Z][a-zA-Z\s&/()-,]+?)(?:\.|,|$|\n|at|role)',
+            # "position: [Position Title]"
+            r'position (?:of|at|listed below)[:\s]+([A-Z][a-zA-Z\s&/()-,]+?)(?:\.|,|$|\n|at|position)',
+            # Standalone position titles with job type keywords
+            r'([A-Z][a-zA-Z\s&/()-,]+? (?:Engineer|Developer|Manager|Analyst|Designer|Specialist|Architect|Lead|Senior|Junior|Early Career|II|III|IV|Platform|Backend|Frontend|Full Stack))',
+            # Generic patterns
+            r'([A-Z][a-zA-Z\s&/()-,]+?) (?:position|role)(?:\.|,|$|\n)',
+            r'job[:\s]+([A-Z][a-zA-Z\s&/()-,]+?)(?:\.|,|$|\n)',
         ]
         
         for pattern in patterns:
@@ -220,12 +265,36 @@ class EmailParser:
             if match:
                 position = match.group(1).strip()
                 # Clean up common prefixes/suffixes
-                position = re.sub(r'^(the|a|an)\s+', '', position, flags=re.IGNORECASE)
+                position = re.sub(r'^(the|a|an|for|to|at|our|your|their)\s+', '', position, flags=re.IGNORECASE)
+                position = re.sub(r'\s+(position|role|job)$', '', position, flags=re.IGNORECASE)
                 position = position.strip()
                 
+                # Stop at common words that indicate end of position
+                # Stop before phrases like "at [Company]", "for [Company]", or before names
+                stop_patterns = [
+                    r'\s+at\s+[A-Z]',  # Stop before "at Company"
+                    r'\s+for\s+[A-Z]',  # Stop before "for Company"
+                    r'\s+(?:and|or|with|,|\.|!)\s*[A-Z][a-z]+\s*[,!]?\s*$',  # Stop before names or other clauses
+                ]
+                for pattern in stop_patterns:
+                    if re.search(pattern, position, re.IGNORECASE):
+                        position = re.split(pattern, position, flags=re.IGNORECASE)[0]
+                        break
+                
+                position = position.strip()
+                
+                # Additional cleanup - remove trailing incomplete words
+                position = re.sub(r'\s+\w{1,2}$', '', position)  # Remove 1-2 char words at end
+                
                 # Validate: should be reasonable length (3-100 chars) and not be too generic
+                invalid_positions = (
+                    'job', 'position', 'role', 'application', 'opportunity',
+                    'nd for submitting your application for the software', 'and appreci',
+                    'your interest', 'your recent application to the full stack developer'
+                )
                 if (3 <= len(position) <= 100 and 
-                    position.lower() not in ('job', 'position', 'role', 'application', 'opportunity')):
+                    position.lower() not in invalid_positions and
+                    not position.lower().startswith(('your ', 'our ', 'the ', 'for ', 'to ', 'at '))):
                     return position
         
         return None
