@@ -1,5 +1,9 @@
 import { vi } from 'vitest'
 
-global.alert = vi.fn()
-global.confirm = vi.fn(() => true)
+const confirmMock = vi.fn(() => true)
+globalThis.alert = vi.fn()
+globalThis.confirm = confirmMock
+if (typeof globalThis.window !== 'undefined') {
+  globalThis.window.confirm = confirmMock
+}
 

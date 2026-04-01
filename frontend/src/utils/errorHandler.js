@@ -8,6 +8,13 @@
  * @returns {string} - User-friendly error message
  */
 export function formatErrorMessage(error) {
+  if (error?.code === 'ECONNABORTED' || /timeout/i.test(error?.message || '')) {
+    return (
+      'The request timed out. Email sync may still be running on the server—wait a minute, then use Reload list. ' +
+      'If this keeps happening, try again or ask an admin to lower the sync batch size.'
+    )
+  }
+
   // Handle network errors
   if (!error.response) {
     if (error.message === 'Network Error') {
