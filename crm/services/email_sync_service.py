@@ -70,8 +70,8 @@ class EmailSyncService:
                         email_account.token_expires_at = timezone.now() + timedelta(hours=1)
                 email_account.save()
             except Exception as e:
-                # If refresh fails, raise error
-                raise Exception(f"Failed to refresh access token: {str(e)}")
+                # If refresh fails, raise error (GmailOAuthService maps invalid_grant, etc.)
+                raise Exception(f"Failed to refresh access token: {e}") from e
         
         # Initialize services
         gmail_service = GmailService(email_account)

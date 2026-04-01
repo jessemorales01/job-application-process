@@ -4,11 +4,26 @@ from datetime import datetime, timedelta
 from django.conf import settings
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
 from google.auth.exceptions import RefreshError
 
 
 class GmailOAuthService:
     """Service for handling Gmail OAuth 2.0 flow"""
+
+    @staticmethod
+    def _refresh_error_user_message(exc):
+        """Turn Google's token errors into actionable copy for the UI."""
+        raw = str(exc)
+        if 'invalid_grant' in raw.lower():
+            return (
+                "Gmail rejected the refresh token (invalid_grant). That usually means the "
+                "connection was revoked, the Google password changed, or your server’s "
+                "OAuth client ID/secret no longer matches the app that issued the token. "
+                "Fix: Settings → disconnect email → connect Gmail again with the same "
+                "Google Cloud OAuth client as in your Django settings."
+            )
+        return raw
     
     # Gmail API scopes required
     SCOPES = [
@@ -50,36 +65,54 @@ class GmailOAuthService:
             }
         }
     
-    def get_authorization_url(self, redirect_uri=None):
-        """Generate OAuth authorization URL for user to grant access."""
+    def get_authorization_url(self, redirect_uri=None, state=None):
+        """Generate OAuth authorization URL for user to grant access.
+
+        If ``state`` is set (e.g. Django signing payload), it is sent to Google
+        and echoed on the callback so the server can recover user id without cache.
+        """
         redirect_uri = redirect_uri or self.redirect_uri or "http://localhost:8000/api/email-accounts/oauth/callback/"
         
         flow = Flow.from_client_config(
             self.client_config,
             scopes=self.SCOPES,
-            redirect_uri=redirect_uri
+            redirect_uri=redirect_uri,
+            autogenerate_code_verifier=False,
         )
-        
-        authorization_url, state = flow.authorization_url(
+
+        auth_kwargs = dict(
             access_type='offline',
             include_granted_scopes='true',
-            prompt='consent'  # Force consent to get refresh token
+            prompt='consent',
         )
-        
+        if state is not None:
+            auth_kwargs['state'] = state
+
+        authorization_url, state = flow.authorization_url(**auth_kwargs)
+
         return authorization_url, state
     
-    def handle_callback(self, authorization_code, redirect_uri=None, state=None):
+    def handle_callback(
+        self,
+        authorization_code,
+        redirect_uri=None,
+        state=None,
+        authorization_response=None,
+    ):
         """Handle OAuth callback and exchange authorization code for tokens"""
         redirect_uri = redirect_uri or self.redirect_uri or "http://localhost:8000/api/email-accounts/oauth/callback/"
         
         flow = Flow.from_client_config(
             self.client_config,
             scopes=self.SCOPES,
-            redirect_uri=redirect_uri
+            redirect_uri=redirect_uri,
+            autogenerate_code_verifier=False,
         )
-        
-        # Exchange authorization code for tokens
-        flow.fetch_token(code=authorization_code)
+
+        if authorization_response:
+            flow.fetch_token(authorization_response=authorization_response)
+        else:
+            flow.fetch_token(code=authorization_code)
         
         credentials = flow.credentials
         
@@ -96,7 +129,7 @@ class GmailOAuthService:
             'access_token': credentials.token,
             'refresh_token': credentials.refresh_token,
             'expires_at': expires_at,
-            'token_type': getattr(credentials, 'token_uri', 'Bearer'),
+            'token_type': 'Bearer',
         }
     
     def refresh_access_token(self, email_account):
@@ -112,8 +145,11 @@ class GmailOAuthService:
             'token_uri': self.client_config['web']['token_uri'],
         })
         
-        # Refresh the token
-        credentials.refresh(None)
+        # Refresh the token (requires a transport Request; None causes TypeError)
+        try:
+            credentials.refresh(Request())
+        except RefreshError as e:
+            raise RefreshError(self._refresh_error_user_message(e)) from e
         
         # Calculate expiration time
         expires_at = None

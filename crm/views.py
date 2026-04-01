@@ -12,6 +12,7 @@ from .serializers import (
 )
 from .mixins import CacheResponseMixin
 from .cache_utils import CACHE_TTL
+from .oauth_link import OAUTH_LINK_MAX_AGE, OAUTH_LINK_SALT
 
 
 @api_view(['POST'])
@@ -128,6 +129,27 @@ class EmailAccountViewSet(CacheResponseMixin, viewsets.ModelViewSet):
     cache_ttl = CACHE_TTL.get('email_accounts', 300)  # 5 minutes default
     cache_user_specific = True
 
+    def perform_destroy(self, instance):
+        """
+        Remove related auto-detected rows in one SQL DELETE (no per-row signals).
+
+        CASCADE ORM delete would fire post_delete for each row; our handler
+        runs broad Redis delete_pattern scans each time — requests appear to
+        hang for large review queues.
+        """
+        from .cache_utils import invalidate_model_cache, invalidate_user_cache
+        from .models import AutoDetectedApplication
+
+        user_id = instance.user_id
+        qs = AutoDetectedApplication.objects.filter(email_account=instance)
+        qs._raw_delete(qs.db)
+
+        invalidate_model_cache('auto_detected_applications')
+        if user_id:
+            invalidate_user_cache(user_id, 'auto_detected_applications')
+
+        instance.delete()
+
     def perform_create(self, serializer):
         """Set the user to the current authenticated user"""
         serializer.save(user=self.request.user)
@@ -168,28 +190,79 @@ class EmailAccountViewSet(CacheResponseMixin, viewsets.ModelViewSet):
         serializer = self.get_serializer(instance)
         return Response(serializer.data)
 
+    @action(detail=False, methods=['post'], url_path='sync')
+    def sync(self, request):
+        """Pull new messages from Gmail and create/update auto-detected applications."""
+        from crm.services.email_sync_service import EmailSyncService
+
+        raw = request.data.get('max_results', 100)
+        try:
+            max_results = int(raw)
+        except (TypeError, ValueError):
+            max_results = 100
+        max_results = max(1, min(max_results, 500))
+
+        accounts = list(self.get_queryset().filter(is_active=True))
+        if not accounts:
+            return Response(
+                {
+                    'detail': 'No active email account to sync.',
+                    'accounts_processed': 0,
+                    'total_emails_processed': 0,
+                    'total_detected_created': 0,
+                    'processing_errors': 0,
+                    'errors': [],
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        service = EmailSyncService()
+        summary = {
+            'accounts_processed': 0,
+            'total_emails_processed': 0,
+            'total_detected_created': 0,
+            'processing_errors': 0,
+            'errors': [],
+        }
+        for account in accounts:
+            try:
+                result = service.sync_emails_for_account(
+                    account, max_results=max_results
+                )
+                summary['accounts_processed'] += 1
+                summary['total_emails_processed'] += result.get('processed', 0)
+                summary['total_detected_created'] += result.get('created', 0)
+                summary['processing_errors'] += int(result.get('errors') or 0)
+            except Exception as e:
+                summary['errors'].append(
+                    {'email': account.email, 'error': str(e)}
+                )
+        return Response(summary, status=status.HTTP_200_OK)
+
 
 @api_view(['GET'])
 def initiate_oauth_flow(request):
     """Initiate Gmail OAuth flow and return authorization URL"""
+    from django.core import signing
     from .services.gmail_oauth import GmailOAuthService
-    
+
     try:
         service = GmailOAuthService()
         redirect_uri = request.query_params.get('redirect_uri')
-        authorization_url, state = service.get_authorization_url(redirect_uri=redirect_uri)
-        
-        # Store user_id in cache keyed by state (expires in 10 minutes)
-        # This works even when Google redirects directly to backend
-        from django.core.cache import cache
-        cache.set(f'oauth_user_{state}', request.user.id, timeout=600)  # 10 minutes
-        
-        # Also store in session as backup
+        signed_state = signing.dumps(
+            {'u': request.user.id},
+            salt=OAUTH_LINK_SALT,
+        )
+        authorization_url, state = service.get_authorization_url(
+            redirect_uri=redirect_uri,
+            state=signed_state,
+        )
+
         if hasattr(request, 'session'):
             request.session['oauth_state'] = state
             request.session['oauth_user_id'] = request.user.id
             request.session.save()
-        
+
         return Response({
             'authorization_url': authorization_url,
             'state': state
@@ -219,29 +292,37 @@ def oauth_callback(request):
         frontend_url = 'http://localhost:5173/settings?oauth_error=Authorization code is required'
         return HttpResponseRedirect(frontend_url)
     
-    # Get user_id from cache (primary) or session (fallback)
+    from django.core import signing
     from django.core.cache import cache
+
     user_id = None
-    
-    # Try cache first (works even with direct redirects)
     if state:
+        try:
+            payload = signing.loads(
+                state,
+                salt=OAUTH_LINK_SALT,
+                max_age=OAUTH_LINK_MAX_AGE,
+            )
+            user_id = payload.get('u')
+        except (signing.BadSignature, signing.SignatureExpired):
+            user_id = None
+
+    if user_id is None and state:
         user_id = cache.get(f'oauth_user_{state}')
-    
-    # Fallback to session if cache doesn't work
-    if not user_id and hasattr(request, 'session'):
-        user_id = request.session.get('oauth_user_id')
+
+    if user_id is None and hasattr(request, 'session'):
         stored_state = request.session.get('oauth_state')
-        
-        # Verify state matches (CSRF protection)
-        if state and state != stored_state:
-            frontend_url = 'http://localhost:5173/settings?oauth_error=Invalid state parameter'
-            return HttpResponseRedirect(frontend_url)
-    
+        session_user_id = request.session.get('oauth_user_id')
+        if session_user_id is not None and stored_state is not None:
+            if state != stored_state:
+                frontend_url = 'http://localhost:5173/settings?oauth_error=Invalid state parameter'
+                return HttpResponseRedirect(frontend_url)
+            user_id = session_user_id
+
     if not user_id:
         frontend_url = 'http://localhost:5173/settings?oauth_error=Session expired. Please try connecting again.'
         return HttpResponseRedirect(frontend_url)
-    
-    # Clean up cache after use
+
     if state:
         cache.delete(f'oauth_user_{state}')
     
@@ -257,7 +338,8 @@ def oauth_callback(request):
         token_data = service.handle_callback(
             authorization_code=authorization_code,
             redirect_uri=redirect_uri,
-            state=state
+            state=state,
+            authorization_response=request.build_absolute_uri(),
         )
         
         # Parse expires_at
@@ -368,10 +450,9 @@ class AutoDetectedApplicationViewSet(CacheResponseMixin, viewsets.ModelViewSet):
         
         if self.request.user.is_staff:
             return qs.all()
-        
-        # Filter by user's email accounts
-        user_email_accounts = EmailAccount.objects.filter(user=self.request.user).values_list('id', flat=True)
-        qs = qs.filter(email_account__in=user_email_accounts)
+
+        # One JOIN; avoid a separate EmailAccount query per list request.
+        qs = qs.filter(email_account__user=self.request.user)
         
         # Filter by status if provided
         status_filter = self.request.query_params.get('status', None)
@@ -475,14 +556,25 @@ class AutoDetectedApplicationViewSet(CacheResponseMixin, viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Validate application_id
-        application_id = request.data.get('application_id')
-        if not application_id:
+        raw_application_id = request.data.get('application_id')
+        if raw_application_id is None or raw_application_id == '':
             return Response(
                 {'application_id': 'This field is required.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+        try:
+            application_id = int(raw_application_id)
+        except (TypeError, ValueError):
+            return Response(
+                {'application_id': 'A valid integer id is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        if application_id < 1:
+            return Response(
+                {'application_id': 'A valid integer id is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         # Get application and verify user owns it
         try:
             application = Application.objects.select_related('created_by').get(id=application_id)

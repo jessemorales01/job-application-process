@@ -2678,6 +2678,44 @@ class EmailAccountAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(EmailAccount.objects.filter(id=account.id).exists())
     
+    def test_delete_email_account_removes_many_detected_apps(self):
+        """Disconnect must finish quickly even with many AutoDetectedApplication rows."""
+        from .models import EmailAccount, AutoDetectedApplication
+
+        account = EmailAccount.objects.create(
+            user=self.user,
+            email='bulk@gmail.com',
+            provider='gmail',
+        )
+        # bulk_create avoids post_save per row (each would invalidate Redis cache patterns).
+        AutoDetectedApplication.objects.bulk_create(
+            [
+                AutoDetectedApplication(
+                    email_account=account,
+                    email_message_id=f'msg-{i}',
+                    company_name=f'Co{i}',
+                    position='',
+                    stack='',
+                    where_applied='',
+                    email='',
+                    phone_number='',
+                    salary_range='',
+                    confidence_score=0.9,
+                    status='pending',
+                )
+                for i in range(15)
+            ]
+        )
+
+        response = self.client.delete(f'/api/email-accounts/{account.id}/')
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(EmailAccount.objects.filter(id=account.id).exists())
+        self.assertEqual(
+            AutoDetectedApplication.objects.filter(email_account_id=account.id).count(),
+            0,
+        )
+
     def test_user_only_sees_own_email_account(self):
         """Test that users can only see their own email account"""
         from .models import EmailAccount
@@ -2779,6 +2817,39 @@ class EmailAccountAPITests(APITestCase):
         # Access token and refresh token should not be in response
         self.assertNotIn('access_token', response.data)
         self.assertNotIn('refresh_token', response.data)
+
+    @patch('crm.services.email_sync_service.EmailSyncService')
+    def test_sync_email_accounts_no_active_account(self, mock_svc):
+        response = self.client.post('/api/email-accounts/sync/', {}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('detail', response.data)
+        mock_svc.assert_not_called()
+
+    @patch('crm.services.email_sync_service.EmailSyncService')
+    def test_sync_email_accounts_calls_service(self, mock_svc_class):
+        from .models import EmailAccount
+
+        mock_inst = mock_svc_class.return_value
+        mock_inst.sync_emails_for_account.return_value = {
+            'processed': 3,
+            'created': 1,
+            'skipped': 2,
+            'errors': 0,
+        }
+        EmailAccount.objects.create(
+            user=self.user,
+            email='sync@gmail.com',
+            provider='gmail',
+            is_active=True,
+        )
+        response = self.client.post(
+            '/api/email-accounts/sync/', {'max_results': 25}, format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['accounts_processed'], 1)
+        self.assertEqual(response.data['total_detected_created'], 1)
+        self.assertEqual(response.data['processing_errors'], 0)
+        mock_inst.sync_emails_for_account.assert_called_once()
 
 
 class GmailOAuthTests(APITestCase):
@@ -2929,6 +3000,35 @@ class GmailOAuthTests(APITestCase):
         with self.assertRaises(RefreshError):
             service.refresh_access_token(account)
     
+    @patch('crm.services.gmail_oauth.Credentials')
+    def test_refresh_access_token_invalid_grant_message(self, mock_credentials_class):
+        """invalid_grant from Google is surfaced as actionable text, not raw JSON."""
+        from crm.services.gmail_oauth import GmailOAuthService
+        from crm.models import EmailAccount
+        from django.utils import timezone
+        from datetime import timedelta
+        from google.auth.exceptions import RefreshError
+
+        account = EmailAccount.objects.create(
+            user=self.user,
+            email='test@gmail.com',
+            provider='gmail',
+            access_token='old',
+            refresh_token='stale_refresh',
+            token_expires_at=timezone.now() - timedelta(hours=1),
+        )
+        mock_credentials = Mock()
+        mock_credentials.refresh.side_effect = RefreshError(
+            '{"error": "invalid_grant", "error_description": "Bad Request"}'
+        )
+        mock_credentials_class.from_authorized_user_info.return_value = mock_credentials
+
+        service = GmailOAuthService()
+        with self.assertRaises(RefreshError) as ctx:
+            service.refresh_access_token(account)
+        self.assertIn('invalid_grant', str(ctx.exception).lower())
+        self.assertIn('Settings', str(ctx.exception))
+
     @patch('crm.services.gmail_oauth.Flow')
     def test_oauth_initiate_endpoint(self, mock_flow_class):
         """Test API endpoint for initiating OAuth flow"""
@@ -2950,9 +3050,12 @@ class GmailOAuthTests(APITestCase):
     
     def test_oauth_callback_endpoint_success(self):
         """Test API endpoint for handling OAuth callback"""
+        from django.core import signing
         from crm.models import EmailAccount
-        
-        # Mock the OAuth service
+        from crm.oauth_link import OAUTH_LINK_SALT
+
+        signed_state = signing.dumps({'u': self.user.id}, salt=OAUTH_LINK_SALT)
+
         with patch('crm.services.gmail_oauth.GmailOAuthService') as mock_service:
             mock_service_instance = Mock()
             mock_service_instance.handle_callback.return_value = {
@@ -2961,24 +3064,39 @@ class GmailOAuthTests(APITestCase):
                 'expires_at': '2024-12-31T00:00:00Z'
             }
             mock_service.return_value = mock_service_instance
-            
+
             response = self.client.get('/api/email-accounts/oauth/callback/', {
                 'code': 'test_code',
-                'state': 'test_state'
+                'state': signed_state,
             })
-            
-            # Should create or update email account
-            self.assertEqual(response.status_code, status.HTTP_200_OK)
-            self.assertTrue(EmailAccount.objects.filter(user=self.user).exists())
-    
+
+        self.assertEqual(response.status_code, status.HTTP_302_FOUND)
+        self.assertIn('oauth_success=true', response.url)
+        self.assertTrue(EmailAccount.objects.filter(user=self.user).exists())
+
+    def test_oauth_callback_cache_miss_no_session_is_session_expired_not_invalid_state(self):
+        """Regression: empty session must not compare state to None → false Invalid state."""
+        from django.core.cache import cache
+
+        cache.clear()
+        response = self.client.get('/api/email-accounts/oauth/callback/', {
+            'code': 'test_code',
+            'state': 'any_state_value',
+        })
+        self.assertEqual(response.status_code, status.HTTP_302_FOUND)
+        self.assertIn('oauth_error=', response.url)
+        self.assertNotIn('Invalid%20state', response.url)
+        self.assertIn('Session%20expired', response.url)
+
     def test_oauth_callback_endpoint_missing_code(self):
         """Test OAuth callback endpoint with missing authorization code"""
         response = self.client.get('/api/email-accounts/oauth/callback/', {
             'state': 'test_state'
         })
-        
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('code', response.data)
+
+        self.assertEqual(response.status_code, status.HTTP_302_FOUND)
+        self.assertIn('oauth_error=', response.url)
+        self.assertIn('Authorization%20code%20is%20required', response.url)
     
     def test_refresh_token_endpoint_success(self):
         """Test API endpoint for refreshing access token"""
