@@ -28,6 +28,8 @@
 </template>
 
 <script>
+import { clearAllCaches } from '../services/listResourceCache'
+
 export default {
   name: 'Layout',
   props: {
@@ -40,6 +42,7 @@ export default {
     logout() {
       localStorage.removeItem('access_token')
       localStorage.removeItem('refresh_token')
+      clearAllCaches()
       this.$router.push('/login')
     }
   }

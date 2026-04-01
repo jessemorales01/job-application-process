@@ -1,5 +1,16 @@
 <template>
   <Layout title="Customers">
+    <ErrorSnackbar
+      v-model="showError"
+      :message="errorMessage"
+      type="error"
+      :multiline="true"
+    />
+    <ErrorSnackbar
+      v-model="showSuccess"
+      :message="successMessage"
+      type="success"
+    />
     <v-card>
       <v-card-title>
         Customers Management
@@ -62,8 +73,15 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn text @click="dialog = false">Cancel</v-btn>
-          <v-btn color="primary" @click="saveCustomer">Save</v-btn>
+          <v-btn text :disabled="customerSaving" @click="dialog = false">Cancel</v-btn>
+          <v-btn
+            color="primary"
+            :loading="customerSaving"
+            :disabled="customerSaving"
+            @click="saveCustomer"
+          >
+            Save
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -72,12 +90,15 @@
 
 <script>
 import Layout from '../components/Layout.vue'
+import ErrorSnackbar from '../components/ErrorSnackbar.vue'
 import api from '../services/api'
+import { formatErrorMessage } from '../utils/errorHandler'
 
 export default {
   name: 'Customers',
   components: {
-    Layout
+    Layout,
+    ErrorSnackbar
   },
   data() {
     return {
@@ -85,6 +106,12 @@ export default {
       loading: false,
       dialog: false,
       editMode: false,
+      customerSaving: false,
+      deletingCustomerId: null,
+      showError: false,
+      errorMessage: '',
+      showSuccess: false,
+      successMessage: '',
       headers: [
         { title: 'Name', key: 'name' },
         { title: 'Email', key: 'email' },
@@ -105,13 +132,23 @@ export default {
     await this.loadCustomers()
   },
   methods: {
+    showErrorNotification(message) {
+      this.errorMessage = message
+      this.showError = true
+    },
+    showSuccessNotification(message) {
+      this.successMessage = message
+      this.showSuccess = true
+    },
     async loadCustomers() {
       this.loading = true
       try {
         const response = await api.get('/customers/')
         this.customers = response.data
       } catch (error) {
-        console.error('Error loading customers:', error)
+        this.showErrorNotification(
+          formatErrorMessage(error) || 'Failed to load customers. Please refresh the page.'
+        )
       } finally {
         this.loading = false
       }
@@ -132,28 +169,109 @@ export default {
       }
       this.dialog = true
     },
-    async saveCustomer() {
+    saveCustomer() {
+      if (this.customerSaving) return
+      this.customerSaving = true
+      this.showError = false
+
+      const form = { ...this.form }
+      const errs = []
+      if (!form.name || !String(form.name).trim()) errs.push('Name is required.')
+      if (!form.email || !String(form.email).trim()) errs.push('Email is required.')
+      if (errs.length) {
+        this.showErrorNotification(errs.join(' '))
+        this.customerSaving = false
+        return
+      }
+
+      const finish = () => {
+        this.customerSaving = false
+      }
+
       try {
         if (this.editMode) {
-          await api.put(`/customers/${this.form.id}/`, this.form)
-        } else {
-          await api.post('/customers/', this.form)
+          const idx = this.customers.findIndex((c) => c.id === form.id)
+          if (idx === -1) {
+            finish()
+            return
+          }
+          const snapshot = { ...this.customers[idx] }
+          this.customers.splice(idx, 1, { ...this.customers[idx], ...form })
+          this.dialog = false
+          this.showSuccessNotification('Customer updated')
+
+          api
+            .put(`/customers/${form.id}/`, form)
+            .then(({ data }) => {
+              const i = this.customers.findIndex((x) => x.id === form.id)
+              if (i !== -1 && data && typeof data === 'object' && Object.keys(data).length > 0) {
+                this.customers.splice(i, 1, { ...this.customers[i], ...data })
+              }
+            })
+            .catch((error) => {
+              const i = this.customers.findIndex((x) => x.id === form.id)
+              if (i !== -1) this.customers.splice(i, 1, snapshot)
+              this.showErrorNotification(
+                formatErrorMessage(error) || 'Failed to save customer. Please try again.'
+              )
+            })
+            .finally(finish)
+          return
         }
+
+        const tempId = -Date.now()
+        const optimistic = { ...form, id: tempId }
+        this.customers = [optimistic, ...this.customers]
         this.dialog = false
-        await this.loadCustomers()
+        this.showSuccessNotification('Customer added')
+
+        api
+          .post('/customers/', form)
+          .then(({ data }) => {
+            const idx = this.customers.findIndex((c) => c.id === tempId)
+            if (idx !== -1) {
+              const merged =
+                data && typeof data === 'object' ? { ...optimistic, ...data } : optimistic
+              this.customers.splice(idx, 1, merged)
+            }
+          })
+          .catch((error) => {
+            const idx = this.customers.findIndex((c) => c.id === tempId)
+            if (idx !== -1) this.customers.splice(idx, 1)
+            this.showErrorNotification(
+              formatErrorMessage(error) || 'Failed to save customer. Please try again.'
+            )
+          })
+          .finally(finish)
       } catch (error) {
-        console.error('Error saving customer:', error)
+        finish()
+        this.showErrorNotification(
+          formatErrorMessage(error) || 'Failed to save customer. Please try again.'
+        )
       }
     },
-    async deleteCustomer(id) {
-      if (confirm('Are you sure you want to delete this customer?')) {
-        try {
-          await api.delete(`/customers/${id}/`)
-          await this.loadCustomers()
-        } catch (error) {
-          console.error('Error deleting customer:', error)
-        }
-      }
+    deleteCustomer(id) {
+      if (!confirm('Are you sure you want to delete this customer?')) return
+      if (this.deletingCustomerId != null) return
+      const idx = this.customers.findIndex((c) => c.id === id)
+      if (idx === -1) return
+      const snapshot = this.customers[idx]
+      this.deletingCustomerId = id
+      this.customers.splice(idx, 1)
+      this.showSuccessNotification('Customer removed')
+
+      api
+        .delete(`/customers/${id}/`)
+        .catch((error) => {
+          const at = Math.min(idx, this.customers.length)
+          this.customers.splice(at, 0, snapshot)
+          this.showErrorNotification(
+            formatErrorMessage(error) || 'Failed to delete customer. Please try again.'
+          )
+        })
+        .finally(() => {
+          this.deletingCustomerId = null
+        })
     }
   }
 }

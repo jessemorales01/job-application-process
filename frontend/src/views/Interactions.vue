@@ -83,8 +83,15 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn text @click="dialog = false">Cancel</v-btn>
-          <v-btn color="primary" @click="saveInteraction">Save</v-btn>
+          <v-btn text :disabled="interactionSaving" @click="dialog = false">Cancel</v-btn>
+          <v-btn
+            color="primary"
+            :loading="interactionSaving"
+            :disabled="interactionSaving"
+            @click="saveInteraction"
+          >
+            Save
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -96,6 +103,13 @@ import Layout from '../components/Layout.vue'
 import ErrorSnackbar from '../components/ErrorSnackbar.vue'
 import api from '../services/api'
 import { formatErrorMessage } from '../utils/errorHandler'
+import {
+  getEntry,
+  getOrFetch,
+  markDirty,
+  markDirtyDashboardLists,
+  putCached,
+} from '../services/listResourceCache'
 
 export default {
   name: 'Interactions',
@@ -113,6 +127,9 @@ export default {
       errorMessage: '',
       showSuccess: false,
       successMessage: '',
+      interactionSaving: false,
+      deletingInteractionId: null,
+      skipNextActivatedRefresh: true,
       interactionTypes: [
         { title: 'Email', value: 'email' },
         { title: 'Phone Call', value: 'phone' },
@@ -144,8 +161,14 @@ export default {
     }
   },
   async mounted() {
-    await this.loadInteractions()
-    await this.loadApplications()
+    await Promise.all([this.loadInteractions(), this.loadApplications()])
+  },
+  activated() {
+    if (this.skipNextActivatedRefresh) {
+      this.skipNextActivatedRefresh = false
+      return
+    }
+    Promise.all([this.loadInteractions(), this.loadApplications()])
   },
   methods: {
     showErrorNotification(message) {
@@ -156,22 +179,33 @@ export default {
       this.successMessage = message
       this.showSuccess = true
     },
-    async loadInteractions() {
-      this.loading = true
+    async loadInteractions(options = {}) {
+      const force = options.force === true
+      const key = 'interactions'
+      const e = getEntry(key)
       try {
-        const response = await api.get('/interactions/')
-        this.interactions = response.data
+        if (!force && !e.dirty && e.fetched) {
+          this.interactions = e.data || []
+          return
+        }
+        const { data } = await getOrFetch(key, '/interactions/', { force })
+        this.interactions = data || []
       } catch (error) {
         const message = formatErrorMessage(error) || 'Failed to load interactions. Please refresh the page.'
         this.showErrorNotification(message)
-      } finally {
-        this.loading = false
       }
     },
-    async loadApplications() {
+    async loadApplications(options = {}) {
+      const force = options.force === true
+      const key = 'applications'
+      const e = getEntry(key)
       try {
-        const response = await api.get('/applications/')
-        this.applications = response.data
+        if (!force && !e.dirty && e.fetched) {
+          this.applications = e.data || []
+          return
+        }
+        const { data } = await getOrFetch(key, '/applications/', { force })
+        this.applications = data || []
       } catch (error) {
         const message = formatErrorMessage(error) || 'Failed to load applications.'
         this.showErrorNotification(message)
@@ -181,6 +215,13 @@ export default {
       if (interaction) {
         this.editMode = true
         this.form = { ...interaction }
+        if (this.form.interaction_date) {
+          const date = new Date(this.form.interaction_date)
+          const localDateTime = new Date(date.getTime() - date.getTimezoneOffset() * 60000)
+            .toISOString()
+            .slice(0, 16)
+          this.form.interaction_date = localDateTime
+        }
       } else {
         this.editMode = false
         const now = new Date()
@@ -198,33 +239,150 @@ export default {
       }
       this.dialog = true
     },
-    async saveInteraction() {
+    saveInteraction() {
+      if (this.interactionSaving) return
+      this.interactionSaving = true
+      this.showError = false
+
+      const form = { ...this.form }
+      const errs = []
+      if (!form.interaction_type) errs.push('Interaction type is required.')
+      if (!form.subject || !String(form.subject).trim()) errs.push('Subject is required.')
+      if (!form.notes || !String(form.notes).trim()) errs.push('Notes are required.')
+      if (!form.interaction_date) errs.push('Interaction date is required.')
+      if (errs.length) {
+        this.showErrorNotification(errs.join(' '))
+        this.interactionSaving = false
+        return
+      }
+
+      const finish = () => {
+        this.interactionSaving = false
+      }
+
       try {
         if (this.editMode) {
-          await api.put(`/interactions/${this.form.id}/`, this.form)
+          const idx = this.interactions.findIndex((i) => i.id === form.id)
+          if (idx === -1) {
+            finish()
+            return
+          }
+          const snapshot = { ...this.interactions[idx] }
+          const app = this.applications.find((a) => a.id === form.application)
+          const updated = {
+            ...this.interactions[idx],
+            ...form,
+            application_company_name: app
+              ? app.company_name
+              : this.interactions[idx].application_company_name,
+          }
+          this.interactions.splice(idx, 1, updated)
+          putCached('interactions', [...this.interactions])
+          this.dialog = false
           this.showSuccessNotification('Interaction updated successfully!')
-        } else {
-          await api.post('/interactions/', this.form)
-          this.showSuccessNotification('Interaction created successfully!')
+
+          api
+            .put(`/interactions/${form.id}/`, form)
+            .then(({ data }) => {
+              const i = this.interactions.findIndex((x) => x.id === form.id)
+              if (i !== -1 && data && typeof data === 'object' && Object.keys(data).length > 0) {
+                this.interactions.splice(i, 1, { ...this.interactions[i], ...data })
+                putCached('interactions', [...this.interactions])
+              }
+              markDirty('interactions')
+              markDirtyDashboardLists()
+            })
+            .catch((error) => {
+              const i = this.interactions.findIndex((x) => x.id === form.id)
+              if (i !== -1) this.interactions.splice(i, 1, snapshot)
+              putCached('interactions', [...this.interactions])
+              markDirty('interactions')
+              this.showErrorNotification(
+                formatErrorMessage(error) || 'Failed to save interaction. Please try again.'
+              )
+            })
+            .finally(finish)
+          return
         }
+
+        const tempId = -Date.now()
+        const app = this.applications.find((a) => a.id === form.application)
+        const optimistic = {
+          id: tempId,
+          application: form.application,
+          application_company_name: app ? app.company_name : undefined,
+          interaction_type: form.interaction_type,
+          direction: form.direction || 'outbound',
+          subject: form.subject,
+          notes: form.notes,
+          interaction_date: form.interaction_date,
+        }
+        this.interactions = [optimistic, ...this.interactions]
+        putCached('interactions', [...this.interactions])
         this.dialog = false
-        await this.loadInteractions()
+        this.showSuccessNotification('Interaction added')
+
+        api
+          .post('/interactions/', form)
+          .then(({ data }) => {
+            const idx = this.interactions.findIndex((i) => i.id === tempId)
+            if (idx !== -1) {
+              const merged =
+                data && typeof data === 'object' ? { ...optimistic, ...data } : optimistic
+              this.interactions.splice(idx, 1, merged)
+              putCached('interactions', [...this.interactions])
+            }
+            markDirty('interactions')
+            markDirtyDashboardLists()
+          })
+          .catch((error) => {
+            const idx = this.interactions.findIndex((i) => i.id === tempId)
+            if (idx !== -1) {
+              this.interactions.splice(idx, 1)
+              putCached('interactions', [...this.interactions])
+            }
+            markDirty('interactions')
+            this.showErrorNotification(
+              formatErrorMessage(error) || 'Failed to save interaction. Please try again.'
+            )
+          })
+          .finally(finish)
       } catch (error) {
-        const message = formatErrorMessage(error) || 'Failed to save interaction. Please try again.'
-        this.showErrorNotification(message)
+        finish()
+        this.showErrorNotification(
+          formatErrorMessage(error) || 'Failed to save interaction. Please try again.'
+        )
       }
     },
-    async deleteInteraction(id) {
-      if (confirm('Are you sure you want to delete this interaction?')) {
-        try {
-          await api.delete(`/interactions/${id}/`)
-          this.showSuccessNotification('Interaction deleted successfully!')
-          await this.loadInteractions()
-        } catch (error) {
-          const message = formatErrorMessage(error) || 'Failed to delete interaction. Please try again.'
-          this.showErrorNotification(message)
-        }
-      }
+    deleteInteraction(id) {
+      if (!confirm('Are you sure you want to delete this interaction?')) return
+      if (this.deletingInteractionId != null) return
+      const idx = this.interactions.findIndex((i) => i.id === id)
+      if (idx === -1) return
+      const snapshot = this.interactions[idx]
+      this.deletingInteractionId = id
+      this.interactions.splice(idx, 1)
+      putCached('interactions', [...this.interactions])
+      this.showSuccessNotification('Interaction removed')
+
+      api
+        .delete(`/interactions/${id}/`)
+        .then(() => {
+          markDirty('interactions')
+          markDirtyDashboardLists()
+        })
+        .catch((error) => {
+          const at = Math.min(idx, this.interactions.length)
+          this.interactions.splice(at, 0, snapshot)
+          putCached('interactions', [...this.interactions])
+          markDirty('interactions')
+          this.showErrorNotification(
+            formatErrorMessage(error) || 'Failed to delete interaction. Please try again.'
+          )
+        })
+        .finally(() => {
+          this.deletingInteractionId = null
+        })
     }
   }
 }

@@ -1,5 +1,11 @@
 <template>
   <Layout title="Leads">
+    <ErrorSnackbar
+      v-model="showError"
+      :message="errorMessage"
+      type="error"
+      :multiline="true"
+    />
     <v-card>
       <v-card-title>
         Leads Management
@@ -173,8 +179,15 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn text @click="dialog = false">Cancel</v-btn>
-          <v-btn color="primary" @click="saveLead">Save</v-btn>
+          <v-btn text :disabled="leadSaving" @click="dialog = false">Cancel</v-btn>
+          <v-btn
+            color="primary"
+            :loading="leadSaving"
+            :disabled="leadSaving"
+            @click="saveLead"
+          >
+            Save
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -183,13 +196,16 @@
 
 <script>
 import Layout from '../components/Layout.vue'
+import ErrorSnackbar from '../components/ErrorSnackbar.vue'
 import api from '../services/api'
 import draggable from 'vuedraggable'
+import { formatErrorMessage } from '../utils/errorHandler'
 
 export default {
   name: 'Leads',
   components: {
     Layout,
+    ErrorSnackbar,
     draggable
   },
   data() {
@@ -201,6 +217,12 @@ export default {
       loading: false,
       dialog: false,
       editMode: false,
+      leadSaving: false,
+      deletingLeadId: null,
+      stageAdding: false,
+      deletingStageId: null,
+      showError: false,
+      errorMessage: '',
       statusOptions: [
         { title: 'New', value: 'new' },
         { title: 'Contacted', value: 'contacted' },
@@ -248,41 +270,18 @@ export default {
     ])
   },
   methods: {
-    getErrorMessage(error) {
-      if (error.response?.data) {
-        const data = error.response.data
-        
-        if (data.error) {
-          return data.error
-        }
-        
-        if (data.non_field_errors) {
-          return Array.isArray(data.non_field_errors) 
-            ? data.non_field_errors.join('\n')
-            : data.non_field_errors
-        }
-        
-        const fieldErrors = Object.entries(data)
-          .map(([field, messages]) => {
-            const fieldName = field.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
-            const errorList = Array.isArray(messages) ? messages : [messages]
-            return `${fieldName}: ${errorList.join(', ')}`
-          })
-          .join('\n')
-        
-        if (fieldErrors) {
-          return fieldErrors
-        }
-      }
-      return null
+    showErrorNotification(message) {
+      this.errorMessage = message
+      this.showError = true
     },
     async loadStages() {
       try {
         const response = await api.get('/stages/')
         this.stages = response.data
       } catch (error) {
-        const message = this.getErrorMessage(error) || 'Failed to load stages. Please refresh the page.'
-        alert(message)
+        this.showErrorNotification(
+          formatErrorMessage(error) || 'Failed to load stages. Please refresh the page.'
+        )
       }
     },
     async loadLeads() {
@@ -291,8 +290,9 @@ export default {
         const response = await api.get('/leads/')
         this.leads = response.data
       } catch (error) {
-        const message = this.getErrorMessage(error) || 'Failed to load leads. Please refresh the page.'
-        alert(message)
+        this.showErrorNotification(
+          formatErrorMessage(error) || 'Failed to load leads. Please refresh the page.'
+        )
       } finally {
         this.loading = false
       }
@@ -334,89 +334,229 @@ export default {
       this.editingStageId = null
       this.editingStageName = ''
     },
-    async saveLead() {
+    saveLead() {
+      if (this.leadSaving) return
+      this.leadSaving = true
+      this.showError = false
+
+      const form = { ...this.form }
+      const errs = []
+      if (!form.name || !String(form.name).trim()) errs.push('Name is required.')
+      if (!form.email || !String(form.email).trim()) errs.push('Email is required.')
+      if (!form.status) errs.push('Status is required.')
+      if (errs.length) {
+        this.showErrorNotification(errs.join(' '))
+        this.leadSaving = false
+        return
+      }
+
+      const finish = () => {
+        this.leadSaving = false
+      }
+
       try {
         if (this.editMode) {
-          await api.put(`/leads/${this.form.id}/`, this.form)
-        } else {
-          await api.post('/leads/', this.form)
-        }
-        this.dialog = false
-        await this.loadLeads()
-      } catch (error) {
-        const message = this.getErrorMessage(error) || 'Failed to save lead. Please try again.'
-        alert(message)
-      }
-    },
-    async deleteLead(id) {
-      if (confirm('Are you sure you want to delete this lead?')) {
-        try {
-          await api.delete(`/leads/${id}/`)
-          await this.loadLeads()
-        } catch (error) {
-          const message = this.getErrorMessage(error) || 'Failed to delete lead. Please try again.'
-          alert(message)
-        }
-      }
-    },
-    async addStage() {
-      const maxOrder = Math.max(...this.stages.map(s => s.order), 0)
-      try {
-        await api.post('/stages/', {
-          name: 'New Stage',
-          order: maxOrder + 1
-        })
-        await this.loadStages()
-      } catch (error) {
-        const message = this.getErrorMessage(error) || 'Failed to add stage. Please try again.'
-        alert(message)
-      }
-    },
-    async deleteStage(id) {
-      if (confirm('Are you sure you want to delete this stage?')) {
-        try {
-          await api.delete(`/stages/${id}/`)
-          await this.loadStages()
-        } catch (error) {
-          const message = this.getErrorMessage(error) || 'Failed to delete stage. Please try again.'
-          alert(message)
-        }
-      }
-    },
-    async onDragChange(event, newStageId) {
-      if (event.added) {
-        const leadId = event.added.element.id
-        
-        try {
-          await api.patch(`/leads/${leadId}/`, { stage: newStageId })
-          
-          // Update local state to avoid reload flash
-          const lead = this.leads.find(l => l.id === leadId)
-          if (lead) {
-            lead.stage = newStageId
+          const idx = this.leads.findIndex((l) => l.id === form.id)
+          if (idx === -1) {
+            finish()
+            return
           }
-        } catch (error) {
-          const message = this.getErrorMessage(error) || 'Failed to move lead. Please try again.'
-          alert(message)
-          await this.loadLeads()
+          const snapshot = { ...this.leads[idx] }
+          Object.assign(this.leads[idx], form)
+          this.dialog = false
+
+          api
+            .put(`/leads/${form.id}/`, form)
+            .then(({ data }) => {
+              const i = this.leads.findIndex((l) => l.id === form.id)
+              if (i !== -1 && data && typeof data === 'object' && Object.keys(data).length > 0) {
+                Object.assign(this.leads[i], data)
+              }
+            })
+            .catch((error) => {
+              Object.assign(this.leads[idx], snapshot)
+              this.showErrorNotification(
+                formatErrorMessage(error) || 'Failed to save lead. Please try again.'
+              )
+            })
+            .finally(finish)
+          return
         }
+
+        const ordered = [...this.stages].sort((a, b) => a.order - b.order)
+        const firstStage = ordered[0]
+        if (!firstStage) {
+          this.showErrorNotification('Create a pipeline stage before adding leads.')
+          finish()
+          return
+        }
+
+        const payload = { ...form, stage: firstStage.id }
+        const tempId = `__tmp_lead_${Date.now()}`
+        const optimistic = { ...payload, id: tempId }
+        this.leads.push(optimistic)
+        this.dialog = false
+
+        api
+          .post('/leads/', payload)
+          .then(({ data }) => {
+            const i = this.leads.findIndex((l) => l.id === tempId)
+            if (i !== -1) {
+              this.leads.splice(i, 1, data)
+            } else {
+              this.leads.push(data)
+            }
+          })
+          .catch((error) => {
+            const i = this.leads.findIndex((l) => l.id === tempId)
+            if (i !== -1) this.leads.splice(i, 1)
+            this.showErrorNotification(
+              formatErrorMessage(error) || 'Failed to save lead. Please try again.'
+            )
+          })
+          .finally(finish)
+      } catch (error) {
+        finish()
+        this.showErrorNotification(
+          formatErrorMessage(error) || 'Failed to save lead. Please try again.'
+        )
       }
     },
-    async saveStageEdit(stageId) {
+    deleteLead(id) {
+      if (!confirm('Are you sure you want to delete this lead?')) return
+      if (this.deletingLeadId != null) return
+      if (String(id).startsWith('__tmp_')) return
+
+      const idx = this.leads.findIndex((l) => l.id === id)
+      if (idx === -1) return
+      const snapshot = this.leads[idx]
+      this.deletingLeadId = id
+      this.leads.splice(idx, 1)
+
+      api
+        .delete(`/leads/${id}/`)
+        .catch((error) => {
+          const at = Math.min(idx, this.leads.length)
+          this.leads.splice(at, 0, snapshot)
+          this.showErrorNotification(
+            formatErrorMessage(error) || 'Failed to delete lead. Please try again.'
+          )
+        })
+        .finally(() => {
+          this.deletingLeadId = null
+        })
+    },
+    addStage() {
+      if (this.stageAdding) return
+      this.stageAdding = true
+      const maxOrder = Math.max(...this.stages.map((s) => s.order), 0)
+      const nextOrder = maxOrder + 1
+      const tempId = `__tmp_stage_${Date.now()}`
+      const optimistic = { id: tempId, name: 'New Stage', order: nextOrder }
+      this.stages = [...this.stages, optimistic].sort((a, b) => a.order - b.order)
+
+      this.$nextTick(() => {
+        api
+          .post('/stages/', { name: 'New Stage', order: nextOrder })
+          .then(({ data }) => {
+            const i = this.stages.findIndex((s) => s.id === tempId)
+            if (i !== -1) {
+              this.stages.splice(i, 1, data)
+            } else {
+              this.stages.push(data)
+            }
+            this.stages.sort((a, b) => a.order - b.order)
+          })
+          .catch((error) => {
+            this.stages = this.stages.filter((s) => s.id !== tempId)
+            this.showErrorNotification(
+              formatErrorMessage(error) || 'Failed to add stage. Please try again.'
+            )
+          })
+          .finally(() => {
+            this.stageAdding = false
+          })
+      })
+    },
+    deleteStage(id) {
+      if (!confirm('Are you sure you want to delete this stage?')) return
+      if (this.deletingStageId != null) return
+      if (String(id).startsWith('__tmp_')) return
+
+      const inStage = this.leads.filter((l) => l.stage === id)
+      if (inStage.length > 0) {
+        this.showErrorNotification(
+          `Move all leads out of this stage before deleting it (${inStage.length} still here).`
+        )
+        return
+      }
+
+      const sIdx = this.stages.findIndex((s) => s.id === id)
+      if (sIdx === -1) return
+      const snapshot = this.stages[sIdx]
+      this.deletingStageId = id
+      this.stages.splice(sIdx, 1)
+
+      api
+        .delete(`/stages/${id}/`)
+        .catch((error) => {
+          const at = Math.min(sIdx, this.stages.length)
+          this.stages.splice(at, 0, snapshot)
+          this.stages.sort((a, b) => a.order - b.order)
+          this.showErrorNotification(
+            formatErrorMessage(error) || 'Failed to delete stage. Please try again.'
+          )
+        })
+        .finally(() => {
+          this.deletingStageId = null
+        })
+    },
+    onDragChange(event, newStageId) {
+      if (!event.added) return
+      const lead = event.added.element
+      const leadId = lead.id
+      if (String(leadId).startsWith('__tmp_')) return
+
+      const previousStage = lead.stage
+      lead.stage = newStageId
+
+      api
+        .patch(`/leads/${leadId}/`, { stage: newStageId })
+        .catch((error) => {
+          lead.stage = previousStage
+          this.showErrorNotification(
+            formatErrorMessage(error) || 'Failed to move lead. Please try again.'
+          )
+        })
+    },
+    saveStageEdit(stageId) {
       if (!this.editingStageName.trim()) {
         this.cancelStageEdit()
         return
       }
-      try {
-        await api.patch(`/stages/${stageId}/`, { name: this.editingStageName })
-        await this.loadStages()
-      } catch (error) {
-        const message = this.getErrorMessage(error) || 'Failed to update stage name. Please try again.'
-        alert(message)
-      } finally {
-        this.editingStageId = null
-        this.editingStageName = ''
+      const stage = this.stages.find((s) => s.id === stageId)
+      if (!stage) {
+        this.cancelStageEdit()
+        return
       }
+      const previousName = stage.name
+      const nextName = this.editingStageName.trim()
+      stage.name = nextName
+      this.editingStageId = null
+      this.editingStageName = ''
+
+      if (String(stageId).startsWith('__tmp_')) {
+        return
+      }
+
+      api
+        .patch(`/stages/${stageId}/`, { name: nextName })
+        .catch((error) => {
+          stage.name = previousName
+          this.showErrorNotification(
+            formatErrorMessage(error) || 'Failed to update stage name. Please try again.'
+          )
+        })
     },
   }
 }

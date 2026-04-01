@@ -1,10 +1,24 @@
 <template>
-  <router-view />
+  <router-view v-slot="{ Component }">
+    <keep-alive
+      :key="layoutKey"
+      include="Dashboard,JobOffers,Activities,Applications,ReviewQueue,Settings"
+    >
+      <component :is="Component" />
+    </keep-alive>
+  </router-view>
 </template>
 
 <script>
+import { listCacheSessionId } from './services/listResourceCache'
+
 export default {
-  name: 'App'
+  name: 'App',
+  computed: {
+    layoutKey() {
+      return listCacheSessionId.value
+    }
+  }
 }
 </script>
 

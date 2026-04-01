@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import Applications from './Applications.vue'
 import Layout from '../components/Layout.vue'
 import api from '../services/api'
+import { clearAllCaches } from '../services/listResourceCache'
 
 vi.mock('../services/api')
 vi.mock('../components/Layout.vue', () => ({
@@ -26,6 +27,7 @@ describe('Applications.vue', () => {
   ]
 
   beforeEach(() => {
+    clearAllCaches()
     api.get = vi.fn((url) => {
       if (url === '/stages/') {
         return Promise.resolve({ data: mockStages })
@@ -97,8 +99,14 @@ describe('Applications.vue', () => {
     await wrapper.vm.$nextTick()
     await new Promise(resolve => setTimeout(resolve, 100))
 
-    expect(api.get).toHaveBeenCalledWith('/stages/')
-    expect(api.get).toHaveBeenCalledWith('/applications/')
+    expect(api.get).toHaveBeenCalledWith(
+      '/stages/',
+      expect.objectContaining({ params: undefined })
+    )
+    expect(api.get).toHaveBeenCalledWith(
+      '/applications/',
+      expect.objectContaining({ params: undefined })
+    )
   })
 
   it('filters applications by stage correctly', () => {
@@ -335,7 +343,7 @@ describe('Applications.vue', () => {
       await wrapper.vm.$nextTick()
 
       expect(wrapper.vm.showSuccess).toBe(true)
-      expect(wrapper.vm.successMessage).toContain('created successfully')
+      expect(wrapper.vm.successMessage).toContain('Application added')
     })
 
     it('displays error snackbar when deleting application fails', async () => {
@@ -348,7 +356,7 @@ describe('Applications.vue', () => {
       api.delete = vi.fn(() => Promise.reject(error))
 
       // Mock confirm to return true
-      global.confirm = vi.fn(() => true)
+      globalThis.confirm = vi.fn(() => true)
 
       wrapper = mount(Applications, {
         data() {
@@ -372,6 +380,7 @@ describe('Applications.vue', () => {
       })
 
       await wrapper.vm.deleteApplication(1)
+      await flushPromises()
       await wrapper.vm.$nextTick()
 
       expect(wrapper.vm.showError).toBe(true)

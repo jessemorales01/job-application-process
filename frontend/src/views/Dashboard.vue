@@ -66,8 +66,8 @@
 
 <script>
 import ErrorSnackbar from '../components/ErrorSnackbar.vue'
-import api from '../services/api'
 import { formatErrorMessage } from '../utils/errorHandler'
+import { getOrFetch, clearAllCaches } from '../services/listResourceCache'
 
 export default {
   name: 'Dashboard',
@@ -82,11 +82,19 @@ export default {
         applications: 0
       },
       showError: false,
-      errorMessage: ''
+      errorMessage: '',
+      skipNextActivatedRefresh: true
     }
   },
   async mounted() {
     await this.loadStats()
+  },
+  activated() {
+    if (this.skipNextActivatedRefresh) {
+      this.skipNextActivatedRefresh = false
+      return
+    }
+    this.loadStats()
   },
   methods: {
     showErrorNotification(message) {
@@ -96,14 +104,18 @@ export default {
     async loadStats() {
       try {
         const [jobOffers, assessments, interactions, applications] = await Promise.all([
-          api.get('/job-offers/'),
-          api.get('/assessments/'),
-          api.get('/interactions/'),
-          api.get('/applications/')
+          getOrFetch('jobOffers', '/job-offers/'),
+          getOrFetch('assessments', '/assessments/'),
+          getOrFetch('interactions', '/interactions/'),
+          getOrFetch('applications', '/applications/')
         ])
-        this.stats.jobOffers = jobOffers.data.length
-        this.stats.activities = assessments.data.length + interactions.data.length
-        this.stats.applications = applications.data.length
+        const jo = jobOffers.data || []
+        const as = assessments.data || []
+        const inter = interactions.data || []
+        const app = applications.data || []
+        this.stats.jobOffers = jo.length
+        this.stats.activities = as.length + inter.length
+        this.stats.applications = app.length
       } catch (error) {
         const message = formatErrorMessage(error) || 'Failed to load dashboard statistics. Please refresh the page.'
         this.showErrorNotification(message)
@@ -112,6 +124,7 @@ export default {
     logout() {
       localStorage.removeItem('access_token')
       localStorage.removeItem('refresh_token')
+      clearAllCaches()
       this.$router.push('/login')
     }
   }

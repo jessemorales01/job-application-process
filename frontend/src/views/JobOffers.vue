@@ -120,8 +120,15 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn text @click="dialog = false">Cancel</v-btn>
-          <v-btn color="primary" @click="saveJobOffer">Save</v-btn>
+          <v-btn text :disabled="jobOfferSaving" @click="dialog = false">Cancel</v-btn>
+          <v-btn
+            color="primary"
+            :loading="jobOfferSaving"
+            :disabled="jobOfferSaving"
+            @click="saveJobOffer"
+          >
+            Save
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -133,6 +140,13 @@ import Layout from '../components/Layout.vue'
 import ErrorSnackbar from '../components/ErrorSnackbar.vue'
 import api from '../services/api'
 import { formatErrorMessage } from '../utils/errorHandler'
+import {
+  getEntry,
+  getOrFetch,
+  markDirty,
+  markDirtyDashboardLists,
+  putCached,
+} from '../services/listResourceCache'
 
 export default {
   name: 'JobOffers',
@@ -178,7 +192,10 @@ export default {
         response_deadline: '',
         status: 'pending',
         notes: ''
-      }
+      },
+      skipNextActivatedRefresh: true,
+      jobOfferSaving: false,
+      deletingJobOfferId: null
     }
   },
   async mounted() {
@@ -186,6 +203,13 @@ export default {
       this.loadJobOffers(),
       this.loadApplications()
     ])
+  },
+  activated() {
+    if (this.skipNextActivatedRefresh) {
+      this.skipNextActivatedRefresh = false
+      return
+    }
+    Promise.all([this.loadJobOffers(), this.loadApplications()])
   },
   methods: {
     showErrorNotification(message) {
@@ -196,11 +220,21 @@ export default {
       this.successMessage = message
       this.showSuccess = true
     },
-    async loadJobOffers() {
-      this.loading = true
+    async loadJobOffers(options = {}) {
+      const force = options.force === true
+      const key = 'jobOffers'
+      const e = getEntry(key)
+      if (!force && !e.dirty && e.fetched) {
+        this.jobOffers = e.data || []
+        return
+      }
+      if (e.fetched) {
+        this.jobOffers = e.data || []
+      }
+      this.loading = !e.fetched
       try {
-        const response = await api.get('/job-offers/')
-        this.jobOffers = response.data
+        const { data } = await getOrFetch(key, '/job-offers/', { force })
+        this.jobOffers = data || []
       } catch (error) {
         const message = formatErrorMessage(error) || 'Failed to load job offers. Please refresh the page.'
         this.showErrorNotification(message)
@@ -208,13 +242,23 @@ export default {
         this.loading = false
       }
     },
-    async loadApplications() {
+    mapApplicationOptions(rows) {
+      return (rows || []).map((app) => ({
+        ...app,
+        title: `${app.company_name}${app.position ? ` - ${app.position}` : ''}`,
+      }))
+    },
+    async loadApplications(options = {}) {
+      const force = options.force === true
+      const key = 'applications'
+      const e = getEntry(key)
       try {
-        const response = await api.get('/applications/')
-        this.applications = response.data.map(app => ({
-          ...app,
-          title: `${app.company_name}${app.position ? ` - ${app.position}` : ''}`
-        }))
+        if (!force && !e.dirty && e.fetched) {
+          this.applications = this.mapApplicationOptions(e.data)
+          return
+        }
+        const { data } = await getOrFetch(key, '/applications/', { force })
+        this.applications = this.mapApplicationOptions(data)
       } catch (error) {
         const message = formatErrorMessage(error) || 'Failed to load applications.'
         this.showErrorNotification(message)
@@ -261,33 +305,137 @@ export default {
       }
       this.dialog = true
     },
-    async saveJobOffer() {
+    saveJobOffer() {
+      if (this.jobOfferSaving) return
+      this.jobOfferSaving = true
+      this.showError = false
+
+      const form = { ...this.form }
+      const errs = []
+      if (!form.company_name || !String(form.company_name).trim()) errs.push('Company name is required.')
+      if (!form.position || !String(form.position).trim()) errs.push('Position is required.')
+      if (!form.salary_range || !String(form.salary_range).trim()) errs.push('Salary range is required.')
+      if (!form.status) errs.push('Status is required.')
+      if (!this.editMode && (form.application == null || form.application === '')) {
+        errs.push('Application is required.')
+      }
+      if (errs.length) {
+        this.showErrorNotification(errs.join(' '))
+        this.jobOfferSaving = false
+        return
+      }
+
+      const finish = () => {
+        this.jobOfferSaving = false
+      }
+
       try {
         if (this.editMode) {
-          await api.put(`/job-offers/${this.form.id}/`, this.form)
+          const idx = this.jobOffers.findIndex((j) => j.id === form.id)
+          if (idx === -1) {
+            finish()
+            return
+          }
+          const snapshot = { ...this.jobOffers[idx] }
+          const updated = { ...this.jobOffers[idx], ...form }
+          this.jobOffers.splice(idx, 1, updated)
+          putCached('jobOffers', [...this.jobOffers])
+          this.dialog = false
           this.showSuccessNotification('Job offer updated successfully!')
-        } else {
-          await api.post('/job-offers/', this.form)
-          this.showSuccessNotification('Job offer created successfully!')
+
+          api
+            .put(`/job-offers/${form.id}/`, form)
+            .then(({ data }) => {
+              const i = this.jobOffers.findIndex((x) => x.id === form.id)
+              if (i !== -1 && data && typeof data === 'object' && Object.keys(data).length > 0) {
+                this.jobOffers.splice(i, 1, { ...this.jobOffers[i], ...data })
+                putCached('jobOffers', [...this.jobOffers])
+              }
+              markDirty('jobOffers')
+              markDirtyDashboardLists()
+            })
+            .catch((error) => {
+              const i = this.jobOffers.findIndex((x) => x.id === form.id)
+              if (i !== -1) this.jobOffers.splice(i, 1, snapshot)
+              putCached('jobOffers', [...this.jobOffers])
+              markDirty('jobOffers')
+              this.showErrorNotification(
+                formatErrorMessage(error) || 'Failed to save job offer. Please try again.'
+              )
+            })
+            .finally(finish)
+          return
         }
+
+        const tempId = -Date.now()
+        const optimistic = { ...form, id: tempId }
+        this.jobOffers = [optimistic, ...this.jobOffers]
+        putCached('jobOffers', [...this.jobOffers])
         this.dialog = false
-        await this.loadJobOffers()
+        this.showSuccessNotification('Job offer added')
+
+        api
+          .post('/job-offers/', form)
+          .then(({ data }) => {
+            const idx = this.jobOffers.findIndex((j) => j.id === tempId)
+            if (idx !== -1) {
+              const merged =
+                data && typeof data === 'object' ? { ...optimistic, ...data } : optimistic
+              this.jobOffers.splice(idx, 1, merged)
+              putCached('jobOffers', [...this.jobOffers])
+            }
+            markDirty('jobOffers')
+            markDirtyDashboardLists()
+          })
+          .catch((error) => {
+            const idx = this.jobOffers.findIndex((j) => j.id === tempId)
+            if (idx !== -1) {
+              this.jobOffers.splice(idx, 1)
+              putCached('jobOffers', [...this.jobOffers])
+            }
+            markDirty('jobOffers')
+            this.showErrorNotification(
+              formatErrorMessage(error) || 'Failed to save job offer. Please try again.'
+            )
+          })
+          .finally(finish)
       } catch (error) {
-        const message = formatErrorMessage(error) || 'Failed to save job offer. Please try again.'
-        this.showErrorNotification(message)
+        finish()
+        this.showErrorNotification(
+          formatErrorMessage(error) || 'Failed to save job offer. Please try again.'
+        )
       }
     },
-    async deleteJobOffer(id) {
-      if (confirm('Are you sure you want to delete this job offer?')) {
-        try {
-          await api.delete(`/job-offers/${id}/`)
-          this.showSuccessNotification('Job offer deleted successfully!')
-          await this.loadJobOffers()
-        } catch (error) {
-          const message = formatErrorMessage(error) || 'Failed to delete job offer. Please try again.'
-          this.showErrorNotification(message)
-        }
-      }
+    deleteJobOffer(id) {
+      if (!confirm('Are you sure you want to delete this job offer?')) return
+      if (this.deletingJobOfferId != null) return
+
+      const idx = this.jobOffers.findIndex((j) => j.id === id)
+      if (idx === -1) return
+      const snapshot = this.jobOffers[idx]
+      this.deletingJobOfferId = id
+      this.jobOffers.splice(idx, 1)
+      putCached('jobOffers', [...this.jobOffers])
+      this.showSuccessNotification('Job offer removed')
+
+      api
+        .delete(`/job-offers/${id}/`)
+        .then(() => {
+          markDirty('jobOffers')
+          markDirtyDashboardLists()
+        })
+        .catch((error) => {
+          const at = Math.min(idx, this.jobOffers.length)
+          this.jobOffers.splice(at, 0, snapshot)
+          putCached('jobOffers', [...this.jobOffers])
+          markDirty('jobOffers')
+          this.showErrorNotification(
+            formatErrorMessage(error) || 'Failed to delete job offer. Please try again.'
+          )
+        })
+        .finally(() => {
+          this.deletingJobOfferId = null
+        })
     },
     getStatusColor(status) {
       const colors = {

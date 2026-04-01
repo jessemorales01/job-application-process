@@ -51,6 +51,7 @@
 
 <script>
 import axios from "axios";
+import { clearAllCaches } from "../services/listResourceCache";
 
 export default {
   name: "Login",
@@ -73,6 +74,7 @@ export default {
         });
         localStorage.setItem("access_token", response.data.access);
         localStorage.setItem("refresh_token", response.data.refresh);
+        clearAllCaches();
         this.$router.push("/dashboard");
       } catch (err) {
         if (err.response?.status === 401) {

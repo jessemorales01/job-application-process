@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import Settings from './Settings.vue'
 import api from '../services/api'
 import ErrorSnackbar from '../components/ErrorSnackbar.vue'
+import { clearAllCaches } from '../services/listResourceCache'
 
 // Mock the API
 vi.mock('../services/api', () => ({
@@ -41,7 +42,14 @@ describe('Settings - Email Connection', () => {
   let wrapper
 
   beforeEach(() => {
+    clearAllCaches()
     vi.clearAllMocks()
+    api.get.mockReset()
+    api.get.mockResolvedValue({ data: null })
+    api.post.mockReset()
+    api.post.mockImplementation(() => Promise.resolve({ data: {} }))
+    api.delete.mockReset()
+    api.delete.mockImplementation(() => Promise.resolve({ status: 204 }))
     localStorage.clear()
     localStorage.setItem('access_token', 'test-token')
   })
@@ -127,7 +135,6 @@ describe('Settings - Email Connection', () => {
   })
 
   it('displays connected email account', async () => {
-    // Mock API to return connected email account
     const mockAccount = {
       id: 1,
       email: 'test@gmail.com',
@@ -136,7 +143,7 @@ describe('Settings - Email Connection', () => {
       last_sync_at: '2024-01-01T12:00:00Z'
     }
 
-    api.get.mockResolvedValueOnce({ data: mockAccount })
+    api.get.mockResolvedValue({ data: mockAccount })
 
     wrapper = createWrapper()
     await wrapper.vm.$nextTick()
@@ -158,6 +165,7 @@ describe('Settings - Email Connection', () => {
 
     api.get.mockResolvedValueOnce({ data: mockAccount })
     api.delete.mockResolvedValueOnce({ status: 204 })
+    globalThis.confirm = vi.fn(() => true)
 
     wrapper = createWrapper()
     await wrapper.vm.$nextTick()
@@ -176,50 +184,31 @@ describe('Settings - Email Connection', () => {
     }
   })
 
-  it('handles OAuth callback when code is present in URL', async () => {
-    // Mock window.location.search
+  it('handles OAuth callback when backend redirects with oauth_success', async () => {
     const originalSearch = window.location.search
     Object.defineProperty(window, 'location', {
       value: {
-        search: '?code=test_code&state=test_state'
+        search: '?oauth_success=true'
       },
       writable: true
     })
 
-    // Mock API responses
-    api.get.mockResolvedValueOnce({ data: null })
-    api.get.mockResolvedValueOnce({
-      data: {
-        authorization_url: 'https://accounts.google.com/o/oauth2/auth',
-        state: 'test_state'
-      }
-    })
-    api.get.mockResolvedValueOnce({
-      data: {
-        id: 1,
-        email: 'test@gmail.com',
-        provider: 'gmail',
-        is_active: true,
-        created: true
-      }
-    })
+    const mockAccount = {
+      id: 1,
+      email: 'test@gmail.com',
+      provider: 'gmail',
+      is_active: true
+    }
+    api.get.mockResolvedValue({ data: mockAccount })
 
     wrapper = createWrapper()
     await wrapper.vm.$nextTick()
     await wrapper.vm.handleOAuthCallback()
     await wrapper.vm.$nextTick()
 
-    expect(api.get).toHaveBeenCalledWith(
-      '/email-accounts/oauth/callback/',
-      expect.objectContaining({
-        params: expect.objectContaining({
-          code: 'test_code',
-          state: 'test_state'
-        })
-      })
-    )
+    expect(wrapper.vm.showSuccess).toBe(true)
+    expect(api.get.mock.calls.some((c) => c[0] === '/email-accounts/')).toBe(true)
 
-    // Restore
     Object.defineProperty(window, 'location', {
       value: { search: originalSearch },
       writable: true
@@ -227,7 +216,7 @@ describe('Settings - Email Connection', () => {
   })
 
   it('displays loading state while fetching email account', async () => {
-    // Mock API to delay response
+    api.get.mockReset()
     api.get.mockImplementationOnce(() => new Promise(resolve => {
       setTimeout(() => resolve({ data: null }), 100)
     }))
@@ -241,6 +230,7 @@ describe('Settings - Email Connection', () => {
 
   it('displays error message when API call fails', async () => {
     const errorMessage = 'Failed to load email account'
+    api.get.mockReset()
     api.get.mockRejectedValueOnce({
       response: {
         status: 400,
@@ -268,7 +258,7 @@ describe('Settings - Email Connection', () => {
       last_sync_at: '2024-01-01T12:00:00Z'
     }
 
-    api.get.mockResolvedValueOnce({ data: mockAccount })
+    api.get.mockResolvedValue({ data: mockAccount })
 
     wrapper = createWrapper()
     await wrapper.vm.$nextTick()
@@ -286,7 +276,7 @@ describe('Settings - Email Connection', () => {
       is_active: true
     }
 
-    api.get.mockResolvedValueOnce({ data: mockAccount })
+    api.get.mockResolvedValue({ data: mockAccount })
 
     wrapper = createWrapper()
     await wrapper.vm.$nextTick()

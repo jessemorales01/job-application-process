@@ -185,8 +185,15 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn text @click="dialog = false">Cancel</v-btn>
-          <v-btn color="primary" @click="saveApplication">Save</v-btn>
+          <v-btn text :disabled="applicationSaving" @click="dialog = false">Cancel</v-btn>
+          <v-btn
+            color="primary"
+            :loading="applicationSaving"
+            :disabled="applicationSaving"
+            @click="saveApplication"
+          >
+            Save
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -199,6 +206,14 @@ import ErrorSnackbar from '../components/ErrorSnackbar.vue'
 import api from '../services/api'
 import draggable from 'vuedraggable'
 import { formatErrorMessage } from '../utils/errorHandler'
+import {
+  getEntry,
+  getOrFetch,
+  markDirty,
+  markDirtyAutoDetected,
+  markDirtyDashboardLists,
+  putCached,
+} from '../services/listResourceCache'
 
 export default {
   name: 'Applications',
@@ -230,7 +245,11 @@ export default {
         where_applied: '',
         applied_date: '',
         notes: ''
-      }
+      },
+      skipNextActivatedRefresh: true,
+      applicationSaving: false,
+      deletingApplicationId: null,
+      deletingStageId: null
     }
   },
   computed: {
@@ -252,6 +271,13 @@ export default {
       this.loadStages()
     ])
   },
+  activated() {
+    if (this.skipNextActivatedRefresh) {
+      this.skipNextActivatedRefresh = false
+      return
+    }
+    Promise.all([this.loadApplications(), this.loadStages()])
+  },
   methods: {
     showErrorNotification(message) {
       this.errorMessage = message
@@ -261,20 +287,37 @@ export default {
       this.successMessage = message
       this.showSuccess = true
     },
-    async loadStages() {
+    async loadStages(options = {}) {
+      const force = options.force === true
+      const key = 'stages'
+      const e = getEntry(key)
       try {
-        const response = await api.get('/stages/')
-        this.stages = response.data
+        if (!force && !e.dirty && e.fetched) {
+          this.stages = e.data || []
+          return
+        }
+        const { data } = await getOrFetch(key, '/stages/', { force })
+        this.stages = data || []
       } catch (error) {
         const message = formatErrorMessage(error) || 'Failed to load stages. Please refresh the page.'
         this.showErrorNotification(message)
       }
     },
-    async loadApplications() {
-      this.loading = true
+    async loadApplications(options = {}) {
+      const force = options.force === true
+      const key = 'applications'
+      const e = getEntry(key)
+      if (!force && !e.dirty && e.fetched) {
+        this.applications = e.data || []
+        return
+      }
+      if (e.fetched) {
+        this.applications = e.data || []
+      }
+      this.loading = !e.fetched
       try {
-        const response = await api.get('/applications/')
-        this.applications = response.data
+        const { data } = await getOrFetch(key, '/applications/', { force })
+        this.applications = data || []
       } catch (error) {
         const message = formatErrorMessage(error) || 'Failed to load applications. Please refresh the page.'
         this.showErrorNotification(message)
@@ -312,7 +355,109 @@ export default {
       this.editingStageId = null
       this.editingStageName = ''
     },
-    async saveApplication() {
+    resetCreateForm() {
+      this.form = {
+        company_name: '',
+        position: '',
+        email: '',
+        phone_number: '',
+        stack: '',
+        salary_range: '',
+        where_applied: '',
+        applied_date: '',
+        notes: ''
+      }
+    },
+    saveApplication() {
+      if (this.applicationSaving) return
+      const finish = () => {
+        this.applicationSaving = false
+      }
+
+      if (this.editMode) {
+        const id = this.form.id
+        const app = this.applications.find((a) => a.id === id)
+        if (!app) {
+          this.persistApplicationEditFallback()
+          return
+        }
+        this.applicationSaving = true
+        const snapshot = { ...app }
+        Object.assign(app, this.form)
+        if (this.form.applied_date) {
+          app.applied_date = this.form.applied_date
+        }
+        putCached('applications', this.applications)
+        this.dialog = false
+        api
+          .put(`/applications/${id}/`, this.form)
+          .then(({ data }) => {
+            Object.assign(app, data)
+            putCached('applications', this.applications)
+            markDirtyAutoDetected()
+            markDirtyDashboardLists()
+            this.showSuccessNotification('Application updated successfully!')
+          })
+          .catch((error) => {
+            Object.assign(app, snapshot)
+            putCached('applications', this.applications)
+            this.showErrorNotification(
+              formatErrorMessage(error) || 'Failed to save application. Please try again.'
+            )
+          })
+          .finally(finish)
+        return
+      }
+
+      const ordered = [...this.stages].sort((a, b) => a.order - b.order)
+      const firstStage = ordered[0]
+      if (!firstStage) {
+        this.showErrorNotification('Create a pipeline stage before adding applications.')
+        return
+      }
+
+      this.applicationSaving = true
+      const tempId = `__tmp_app_${Date.now()}`
+      const payload = { ...this.form }
+      const optimistic = {
+        ...payload,
+        id: tempId,
+        stage: firstStage.id
+      }
+      this.applications.push(optimistic)
+      putCached('applications', this.applications)
+      this.dialog = false
+      this.resetCreateForm()
+      this.showSuccessNotification('Application added.')
+
+      api
+        .post('/applications/', payload)
+        .then(({ data }) => {
+          const i = this.applications.findIndex((a) => a.id === tempId)
+          if (i !== -1) {
+            this.applications.splice(i, 1, data)
+          } else {
+            this.applications.push(data)
+          }
+          putCached('applications', this.applications)
+          markDirtyAutoDetected()
+          markDirtyDashboardLists()
+        })
+        .catch((error) => {
+          const i = this.applications.findIndex((a) => a.id === tempId)
+          if (i !== -1) {
+            this.applications.splice(i, 1)
+          }
+          putCached('applications', this.applications)
+          this.showErrorNotification(
+            formatErrorMessage(error) || 'Failed to create application. Please try again.'
+          )
+        })
+        .finally(finish)
+    },
+    async persistApplicationEditFallback() {
+      if (this.applicationSaving) return
+      this.applicationSaving = true
       try {
         if (this.editMode) {
           await api.put(`/applications/${this.form.id}/`, this.form)
@@ -322,85 +467,184 @@ export default {
           this.showSuccessNotification('Application created successfully!')
         }
         this.dialog = false
-        await this.loadApplications()
+        markDirty('applications')
+        markDirtyAutoDetected()
+        markDirtyDashboardLists()
+        await this.loadApplications({ force: true })
       } catch (error) {
         const message = formatErrorMessage(error) || 'Failed to save application. Please try again.'
         this.showErrorNotification(message)
+      } finally {
+        this.applicationSaving = false
       }
     },
-    async deleteApplication(id) {
-      if (confirm('Are you sure you want to delete this application?')) {
-        try {
-          await api.delete(`/applications/${id}/`)
-          this.showSuccessNotification('Application deleted successfully!')
-          await this.loadApplications()
-        } catch (error) {
-          const message = formatErrorMessage(error) || 'Failed to delete application. Please try again.'
-          this.showErrorNotification(message)
-        }
-      }
-    },
-    async addStage() {
-      const maxOrder = Math.max(...this.stages.map(s => s.order), 0)
-      try {
-        await api.post('/stages/', {
-          name: 'New Stage',
-          order: maxOrder + 1
+    deleteApplication(id) {
+      if (!confirm('Are you sure you want to delete this application?')) return
+      if (this.deletingApplicationId != null) return
+      if (String(id).startsWith('__tmp_')) return
+
+      const idx = this.applications.findIndex((a) => a.id === id)
+      if (idx === -1) return
+      const snapshot = this.applications[idx]
+      this.deletingApplicationId = id
+      this.applications.splice(idx, 1)
+      putCached('applications', this.applications)
+      this.showSuccessNotification('Application removed')
+
+      api
+        .delete(`/applications/${id}/`)
+        .then(() => {
+          markDirty('applications')
+          markDirtyAutoDetected()
+          markDirtyDashboardLists()
         })
-        this.showSuccessNotification('Stage added successfully!')
-        await this.loadStages()
-      } catch (error) {
-        const message = formatErrorMessage(error) || 'Failed to add stage. Please try again.'
-        this.showErrorNotification(message)
-      }
+        .catch((error) => {
+          const at = Math.min(idx, this.applications.length)
+          this.applications.splice(at, 0, snapshot)
+          putCached('applications', this.applications)
+          markDirty('applications')
+          this.showErrorNotification(
+            formatErrorMessage(error) || 'Failed to delete application. Please try again.'
+          )
+        })
+        .finally(() => {
+          this.deletingApplicationId = null
+        })
     },
-    async deleteStage(id) {
-      if (confirm('Are you sure you want to delete this stage?')) {
-        try {
-          await api.delete(`/stages/${id}/`)
-          this.showSuccessNotification('Stage deleted successfully!')
-          await this.loadStages()
-        } catch (error) {
-          const message = formatErrorMessage(error) || 'Failed to delete stage. Please try again.'
-          this.showErrorNotification(message)
-        }
-      }
+    addStage() {
+      const maxOrder = Math.max(...this.stages.map((s) => s.order), 0)
+      const nextOrder = maxOrder + 1
+      const tempId = `__tmp_stage_${Date.now()}`
+      const optimistic = { id: tempId, name: 'New Stage', order: nextOrder }
+      this.stages = [...this.stages, optimistic].sort((a, b) => a.order - b.order)
+      putCached('stages', this.stages)
+      this.showSuccessNotification('Stage added.')
+
+      this.$nextTick(() => {
+        const s = this.stages.find((x) => x.id === tempId)
+        const body = { name: (s && s.name) || 'New Stage', order: nextOrder }
+        api
+          .post('/stages/', body)
+          .then(({ data }) => {
+            const i = this.stages.findIndex((s) => s.id === tempId)
+            if (i !== -1) {
+              this.stages.splice(i, 1, data)
+            } else {
+              this.stages.push(data)
+            }
+            this.stages.sort((a, b) => a.order - b.order)
+            putCached('stages', this.stages)
+          })
+          .catch((error) => {
+            this.stages = this.stages.filter((s) => s.id !== tempId)
+            putCached('stages', this.stages)
+            this.showErrorNotification(
+              formatErrorMessage(error) || 'Failed to add stage. Please try again.'
+            )
+          })
+      })
     },
-    async onDragChange(event, newStageId) {
-      if (event.added) {
-        const applicationId = event.added.element.id
-        
-        try {
-          await api.patch(`/applications/${applicationId}/`, { stage: newStageId })
-          
-          const application = this.applications.find(a => a.id === applicationId)
-          if (application) {
-            application.stage = newStageId
-          }
-          this.showSuccessNotification('Application moved successfully!')
-        } catch (error) {
-          const message = formatErrorMessage(error) || 'Failed to move application. Please try again.'
-          this.showErrorNotification(message)
-          await this.loadApplications()
-        }
+    deleteStage(id) {
+      if (!confirm('Are you sure you want to delete this stage?')) return
+      if (this.deletingStageId != null) return
+      if (String(id).startsWith('__tmp_')) return
+
+      const appsInStage = this.applications.filter((a) => a.stage === id)
+      if (appsInStage.length > 0) {
+        this.showErrorNotification(
+          `Move all applications out of this stage before deleting it (${appsInStage.length} still here).`
+        )
+        return
       }
+
+      const sIdx = this.stages.findIndex((s) => s.id === id)
+      if (sIdx === -1) return
+      const snapshot = this.stages[sIdx]
+      this.deletingStageId = id
+      this.stages.splice(sIdx, 1)
+      putCached('stages', [...this.stages])
+      this.showSuccessNotification('Stage removed')
+
+      api
+        .delete(`/stages/${id}/`)
+        .then(() => {
+          markDirty('stages')
+        })
+        .catch((error) => {
+          const at = Math.min(sIdx, this.stages.length)
+          this.stages.splice(at, 0, snapshot)
+          this.stages.sort((a, b) => a.order - b.order)
+          putCached('stages', [...this.stages])
+          markDirty('stages')
+          this.showErrorNotification(
+            formatErrorMessage(error) || 'Failed to delete stage. Please try again.'
+          )
+        })
+        .finally(() => {
+          this.deletingStageId = null
+        })
     },
-    async saveStageEdit(stageId) {
+    onDragChange(event, newStageId) {
+      if (!event.added) return
+      const applicationId = event.added.element.id
+      const application = this.applications.find((a) => a.id === applicationId)
+      if (!application) return
+
+      const previousStage = application.stage
+      application.stage = newStageId
+      putCached('applications', this.applications)
+      this.showSuccessNotification('Application moved successfully.')
+
+      if (String(applicationId).startsWith('__tmp_')) {
+        return
+      }
+
+      api
+        .patch(`/applications/${applicationId}/`, { stage: newStageId })
+        .then(() => {
+          putCached('applications', this.applications)
+        })
+        .catch((error) => {
+          application.stage = previousStage
+          putCached('applications', this.applications)
+          this.showErrorNotification(
+            formatErrorMessage(error) || 'Failed to move application. Please try again.'
+          )
+        })
+    },
+    saveStageEdit(stageId) {
       if (!this.editingStageName.trim()) {
         this.cancelStageEdit()
         return
       }
-      try {
-        await api.patch(`/stages/${stageId}/`, { name: this.editingStageName })
-        this.showSuccessNotification('Stage name updated successfully!')
-        await this.loadStages()
-      } catch (error) {
-        const message = formatErrorMessage(error) || 'Failed to update stage name. Please try again.'
-        this.showErrorNotification(message)
-      } finally {
-        this.editingStageId = null
-        this.editingStageName = ''
+      const stage = this.stages.find((s) => s.id === stageId)
+      if (!stage) {
+        this.cancelStageEdit()
+        return
       }
+      const previousName = stage.name
+      const nextName = this.editingStageName.trim()
+      stage.name = nextName
+      this.editingStageId = null
+      this.editingStageName = ''
+      putCached('stages', this.stages)
+
+      if (String(stageId).startsWith('__tmp_')) {
+        return
+      }
+
+      api
+        .patch(`/stages/${stageId}/`, { name: nextName })
+        .then(() => {
+          this.showSuccessNotification('Stage name updated successfully!')
+        })
+        .catch((error) => {
+          stage.name = previousName
+          putCached('stages', this.stages)
+          this.showErrorNotification(
+            formatErrorMessage(error) || 'Failed to update stage name. Please try again.'
+          )
+        })
     },
   }
 }

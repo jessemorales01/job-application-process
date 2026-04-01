@@ -9,7 +9,8 @@
     <ErrorSnackbar
       v-model="showSuccess"
       :message="successMessage"
-      type="success"
+      :type="successNotificationType"
+      :multiline="successNotificationType === 'warning'"
     />
     <v-card>
       <v-card-title>
@@ -69,6 +70,17 @@
               <v-divider class="my-4"></v-divider>
 
               <v-btn
+                color="primary"
+                class="mr-2 mb-2"
+                @click="syncInbox"
+                :loading="syncing"
+                :disabled="syncing || !emailAccount.is_active"
+              >
+                <v-icon left>mdi-email-sync</v-icon>
+                Sync inbox now
+              </v-btn>
+
+              <v-btn
                 color="error"
                 @click="disconnectEmail"
                 :loading="disconnecting"
@@ -115,6 +127,18 @@ import api from '../services/api'
 import Layout from '../components/Layout.vue'
 import ErrorSnackbar from '../components/ErrorSnackbar.vue'
 import { formatErrorMessage } from '../utils/errorHandler'
+import { formatSyncNotification } from '../utils/emailSyncNotification'
+import {
+  getOrFetch,
+  markDirty,
+  markDirtyAutoDetected,
+  markDirtyDashboardLists,
+  putCached,
+} from '../services/listResourceCache'
+import {
+  EMAIL_SYNC_MAX_RESULTS,
+  EMAIL_SYNC_TIMEOUT_MS,
+} from '../constants/emailSync'
 
 export default {
   name: 'Settings',
@@ -128,10 +152,12 @@ export default {
       loading: false,
       connecting: false,
       disconnecting: false,
+      syncing: false,
       showError: false,
       errorMessage: '',
       showSuccess: false,
-      successMessage: ''
+      successMessage: '',
+      successNotificationType: 'success'
     }
   },
   async mounted() {
@@ -139,19 +165,48 @@ export default {
     await this.handleOAuthCallback()
   },
   methods: {
-    async loadEmailAccount() {
+    async loadEmailAccount(options = {}) {
+      const force = options.force === true
       this.loading = true
       this.showError = false
       try {
-        const response = await api.get('/email-accounts/')
-        // API returns null if no account, or the account object if exists
-        this.emailAccount = response.data || null
+        const { data } = await getOrFetch('emailAccount', '/email-accounts/', {
+          force,
+        })
+        this.emailAccount = data || null
       } catch (error) {
         this.showError = true
         this.errorMessage = formatErrorMessage(error)
       } finally {
         this.loading = false
       }
+    },
+    async syncInbox() {
+      this.syncing = true
+      this.showError = false
+      let response = null
+      try {
+        response = await api.post(
+          '/email-accounts/sync/',
+          { max_results: EMAIL_SYNC_MAX_RESULTS },
+          { timeout: EMAIL_SYNC_TIMEOUT_MS }
+        )
+      } catch (error) {
+        this.showError = true
+        this.errorMessage = formatErrorMessage(error)
+        return
+      } finally {
+        this.syncing = false
+      }
+
+      const { type, message } = formatSyncNotification(response.data)
+      markDirty('emailAccount')
+      markDirtyAutoDetected()
+      markDirtyDashboardLists()
+      await this.loadEmailAccount({ force: true })
+      this.successNotificationType = type
+      this.showSuccess = true
+      this.successMessage = message
     },
     async connectEmail() {
       this.connecting = true
@@ -188,7 +243,7 @@ export default {
         this.showError = false
         
         // Reload email account to show connected status
-        await this.loadEmailAccount()
+        await this.loadEmailAccount({ force: true })
 
         // Show success message
         this.showSuccess = true
@@ -207,8 +262,9 @@ export default {
       }
       // If neither parameter exists, this is not an OAuth callback
     },
-    async disconnectEmail() {
+    disconnectEmail() {
       if (!this.emailAccount) return
+      if (this.disconnecting) return
 
       if (!confirm('Are you sure you want to disconnect this email account? This will stop automatic email detection.')) {
         return
@@ -216,21 +272,32 @@ export default {
 
       this.disconnecting = true
       this.showError = false
-      try {
-        await api.delete(`/email-accounts/${this.emailAccount.id}/`)
-        
-        // Clear email account
-        this.emailAccount = null
+      const snapshot = { ...this.emailAccount }
+      const accountId = snapshot.id
 
-        // Show success message
-        this.showSuccess = true
-        this.successMessage = 'Email account disconnected successfully.'
-      } catch (error) {
-        this.showError = true
-        this.errorMessage = formatErrorMessage(error)
-      } finally {
-        this.disconnecting = false
-      }
+      putCached('emailAccount', null)
+      this.emailAccount = null
+      this.successNotificationType = 'success'
+      this.showSuccess = true
+      this.successMessage = 'Disconnecting…'
+
+      api
+        .delete(`/email-accounts/${accountId}/`)
+        .then(() => {
+          markDirtyAutoDetected()
+          markDirtyDashboardLists()
+          this.successMessage = 'Email account disconnected successfully.'
+        })
+        .catch((error) => {
+          putCached('emailAccount', snapshot)
+          this.emailAccount = snapshot
+          this.showSuccess = false
+          this.showError = true
+          this.errorMessage = formatErrorMessage(error)
+        })
+        .finally(() => {
+          this.disconnecting = false
+        })
     },
     formatDate(dateString) {
       if (!dateString) return 'Never'
