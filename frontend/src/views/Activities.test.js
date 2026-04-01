@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import Activities from './Activities.vue'
 import Layout from '../components/Layout.vue'
 import api from '../services/api'
+import { clearAllCaches } from '../services/listResourceCache'
 
 vi.mock('../services/api')
 vi.mock('../components/Layout.vue', () => ({
@@ -71,6 +72,12 @@ describe('Activities.vue', () => {
   ]
 
   beforeEach(() => {
+    clearAllCaches()
+    const confirmMock = vi.fn(() => true)
+    globalThis.confirm = confirmMock
+    if (typeof globalThis.window !== 'undefined') {
+      globalThis.window.confirm = confirmMock
+    }
     api.get = vi.fn((url) => {
       if (url === '/assessments/') {
         return Promise.resolve({ data: mockAssessments })
@@ -129,9 +136,18 @@ describe('Activities.vue', () => {
     await wrapper.vm.$nextTick()
     await new Promise(resolve => setTimeout(resolve, 100))
 
-    expect(api.get).toHaveBeenCalledWith('/assessments/')
-    expect(api.get).toHaveBeenCalledWith('/interactions/')
-    expect(api.get).toHaveBeenCalledWith('/applications/')
+    expect(api.get).toHaveBeenCalledWith(
+      '/assessments/',
+      expect.objectContaining({ params: undefined })
+    )
+    expect(api.get).toHaveBeenCalledWith(
+      '/interactions/',
+      expect.objectContaining({ params: undefined })
+    )
+    expect(api.get).toHaveBeenCalledWith(
+      '/applications/',
+      expect.objectContaining({ params: undefined })
+    )
   })
 
   it('combines assessments and interactions in filteredActivities', async () => {
@@ -266,6 +282,8 @@ describe('Activities.vue', () => {
   })
 
   it('saves new assessment via API', async () => {
+    api.post = vi.fn(() => Promise.resolve({ data: { id: 99 } }))
+
     wrapper = mount(Activities, {
       data() {
         return {
@@ -278,13 +296,13 @@ describe('Activities.vue', () => {
           assessmentEditMode: false,
           assessmentForm: {
             application: 1,
-            deadline: '2024-12-25',
+            deadline: '2025-06-15',
             website_url: 'https://test.com',
             recruiter_contact_name: 'Jane Doe',
             recruiter_contact_email: 'jane@example.com',
             recruiter_contact_phone: '555-5678',
             status: 'pending',
-            notes: 'Test assessment'
+            notes: 'Unique new assessment row for save test'
           }
         }
       },
@@ -303,10 +321,18 @@ describe('Activities.vue', () => {
       }
     })
 
+    await flushPromises()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
     await wrapper.vm.saveAssessment()
+    await flushPromises()
 
     expect(api.post).toHaveBeenCalledWith('/assessments/', wrapper.vm.assessmentForm)
-    expect(api.get).toHaveBeenCalledWith('/assessments/')
+    const created = wrapper.vm.assessments.find(
+      (a) => a.notes === 'Unique new assessment row for save test'
+    )
+    expect(created).toBeDefined()
+    expect(created.id).toBe(99)
   })
 
   it('saves new interaction via API', async () => {
@@ -345,10 +371,16 @@ describe('Activities.vue', () => {
       }
     })
 
+    await flushPromises()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
     await wrapper.vm.saveInteraction()
+    await flushPromises()
 
     expect(api.post).toHaveBeenCalledWith('/interactions/', wrapper.vm.interactionForm)
-    expect(api.get).toHaveBeenCalledWith('/interactions/')
+    const created = wrapper.vm.interactions.find((i) => i.subject === 'Test email')
+    expect(created).toBeDefined()
+    expect(created.id).toBe(3)
   })
 
   it('deletes assessment when deleteItem is called', async () => {
@@ -382,10 +414,12 @@ describe('Activities.vue', () => {
       originalId: 1
     }
 
+    globalThis.confirm = vi.fn(() => true)
     await wrapper.vm.deleteItem(activity)
+    await flushPromises()
 
     expect(api.delete).toHaveBeenCalledWith('/assessments/1/')
-    expect(api.get).toHaveBeenCalledWith('/assessments/')
+    expect(wrapper.vm.assessments.find((a) => a.id === 1)).toBeUndefined()
   })
 
   it('deletes interaction when deleteItem is called', async () => {
@@ -419,10 +453,49 @@ describe('Activities.vue', () => {
       originalId: 1
     }
 
+    globalThis.confirm = vi.fn(() => true)
     await wrapper.vm.deleteItem(activity)
+    await flushPromises()
 
     expect(api.delete).toHaveBeenCalledWith('/interactions/1/')
-    expect(api.get).toHaveBeenCalledWith('/interactions/')
+    expect(wrapper.vm.interactions.find((i) => i.id === 1)).toBeUndefined()
+  })
+
+  it('does not rollback interaction delete when API returns 404 (already deleted)', async () => {
+    api.delete = vi.fn(() =>
+      Promise.reject({ response: { status: 404, data: { detail: 'Not found.' } } })
+    )
+
+    wrapper = mount(Activities, {
+      data() {
+        return {
+          assessments: [],
+          interactions: [...mockInteractions],
+          applications: mockApplications,
+          loading: false,
+          selectedApplication: null
+        }
+      },
+      global: {
+        stubs: {
+          Layout: true,
+          'v-card': true,
+          'v-card-title': true,
+          'v-card-text': true,
+          'v-btn': true,
+          'v-icon': true,
+          'v-spacer': true,
+          'v-select': true,
+          'v-data-table': true
+        }
+      }
+    })
+
+    const activity = { originalType: 'interaction', originalId: 1 }
+    await wrapper.vm.deleteItem(activity)
+    await flushPromises()
+
+    expect(wrapper.vm.interactions.find((i) => i.id === 1)).toBeUndefined()
   })
 
   it('returns correct type color for Assessment and Interaction', () => {
@@ -676,6 +749,7 @@ describe('Activities.vue', () => {
       expect(wrapper.vm.showError).toBe(true)
       expect(wrapper.vm.errorMessage).toContain('Deadline')
       expect(wrapper.vm.errorMessage).toContain('Application')
+      expect(api.post).not.toHaveBeenCalled()
     })
 
     it('displays success snackbar when assessment is saved successfully', async () => {
@@ -712,6 +786,7 @@ describe('Activities.vue', () => {
       })
 
       await wrapper.vm.saveAssessment()
+      await flushPromises()
       await wrapper.vm.$nextTick()
 
       expect(wrapper.vm.showSuccess).toBe(true)
@@ -732,6 +807,9 @@ describe('Activities.vue', () => {
       wrapper = mount(Activities, {
         data() {
           return {
+            interactionDialog: true,
+            interactions: [],
+            applications: mockApplications,
             interactionForm: {
               application: null,
               interaction_type: 'email',
@@ -757,55 +835,11 @@ describe('Activities.vue', () => {
       })
 
       await wrapper.vm.saveInteraction()
+      await flushPromises()
       await wrapper.vm.$nextTick()
 
       expect(wrapper.vm.showError).toBe(true)
       expect(wrapper.vm.errorMessage).toContain('Interaction Date')
-    })
-
-    it('displays error snackbar when deleting assessment fails', async () => {
-      const error = {
-        response: {
-          status: 404,
-          data: { detail: 'Assessment not found' }
-        }
-      }
-      api.delete = vi.fn(() => Promise.reject(error))
-
-      // Mock confirm to return true
-      global.confirm = vi.fn(() => true)
-
-      wrapper = mount(Activities, {
-        data() {
-          return {
-            assessments: mockAssessments,
-            interactions: []
-          }
-        },
-        global: {
-          stubs: {
-            Layout: true,
-            ErrorSnackbar: true,
-            'v-card': true,
-            'v-card-title': true,
-            'v-card-text': true,
-            'v-btn': true,
-            'v-icon': true,
-            'v-spacer': true
-          }
-        }
-      })
-
-      const item = {
-        originalType: 'assessment',
-        originalId: 999 // Non-existent ID
-      }
-
-      await wrapper.vm.deleteItem(item)
-      await wrapper.vm.$nextTick()
-
-      expect(wrapper.vm.showError).toBe(true)
-      expect(wrapper.vm.errorMessage).toContain('not found')
     })
 
     it('handles network errors when loading data', async () => {

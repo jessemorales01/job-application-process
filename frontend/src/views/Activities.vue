@@ -144,8 +144,15 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn text @click="assessmentDialog = false">Cancel</v-btn>
-          <v-btn color="primary" @click="saveAssessment">Save</v-btn>
+          <v-btn text :disabled="assessmentSaving" @click="assessmentDialog = false">Cancel</v-btn>
+          <v-btn
+            color="primary"
+            :loading="assessmentSaving"
+            :disabled="assessmentSaving"
+            @click="saveAssessment"
+          >
+            Save
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -196,8 +203,15 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn text @click="interactionDialog = false">Cancel</v-btn>
-          <v-btn color="primary" @click="saveInteraction">Save</v-btn>
+          <v-btn text :disabled="interactionSaving" @click="interactionDialog = false">Cancel</v-btn>
+          <v-btn
+            color="primary"
+            :loading="interactionSaving"
+            :disabled="interactionSaving"
+            @click="saveInteraction"
+          >
+            Save
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -209,6 +223,13 @@ import Layout from '../components/Layout.vue'
 import ErrorSnackbar from '../components/ErrorSnackbar.vue'
 import api from '../services/api'
 import { formatErrorMessage } from '../utils/errorHandler'
+import {
+  getEntry,
+  getOrFetch,
+  markDirty,
+  markDirtyDashboardLists,
+  putCached,
+} from '../services/listResourceCache'
 
 export default {
   name: 'Activities',
@@ -231,12 +252,17 @@ export default {
       errorMessage: '',
       showSuccess: false,
       successMessage: '',
+      assessmentSaving: false,
+      interactionSaving: false,
+      /** In-flight delete per row only — avoids double-click on same item; other rows can delete in parallel. */
+      deletingActivityKeys: {},
       statusOptions: [
         { title: 'Pending', value: 'pending' },
         { title: 'In Progress', value: 'in_progress' },
         { title: 'Submitted', value: 'submitted' },
         { title: 'Completed', value: 'completed' }
       ],
+      skipNextActivatedRefresh: true,
       interactionTypes: [
         { title: 'Email', value: 'email' },
         { title: 'Phone Call', value: 'phone' },
@@ -353,6 +379,17 @@ export default {
       this.loadApplications()
     ])
   },
+  activated() {
+    if (this.skipNextActivatedRefresh) {
+      this.skipNextActivatedRefresh = false
+      return
+    }
+    Promise.all([
+      this.loadAssessments(),
+      this.loadInteractions(),
+      this.loadApplications()
+    ])
+  },
   methods: {
     showErrorNotification(message) {
       this.errorMessage = message
@@ -362,11 +399,21 @@ export default {
       this.successMessage = message
       this.showSuccess = true
     },
-    async loadAssessments() {
-      this.loading = true
+    async loadAssessments(options = {}) {
+      const force = options.force === true
+      const key = 'assessments'
+      const e = getEntry(key)
+      if (!force && !e.dirty && e.fetched) {
+        this.assessments = e.data || []
+        return
+      }
+      if (e.fetched) {
+        this.assessments = e.data || []
+      }
+      this.loading = !e.fetched
       try {
-        const response = await api.get('/assessments/')
-        this.assessments = response.data
+        const { data } = await getOrFetch(key, '/assessments/', { force })
+        this.assessments = data || []
       } catch (error) {
         const message = formatErrorMessage(error) || 'Failed to load assessments. Please refresh the page.'
         this.showErrorNotification(message)
@@ -374,22 +421,39 @@ export default {
         this.loading = false
       }
     },
-    async loadInteractions() {
+    async loadInteractions(options = {}) {
+      const force = options.force === true
+      const key = 'interactions'
+      const e = getEntry(key)
       try {
-        const response = await api.get('/interactions/')
-        this.interactions = response.data
+        if (!force && !e.dirty && e.fetched) {
+          this.interactions = e.data || []
+          return
+        }
+        const { data } = await getOrFetch(key, '/interactions/', { force })
+        this.interactions = data || []
       } catch (error) {
         const message = formatErrorMessage(error) || 'Failed to load interactions. Please refresh the page.'
         this.showErrorNotification(message)
       }
     },
-    async loadApplications() {
+    mapApplicationOptions(rows) {
+      return (rows || []).map((app) => ({
+        ...app,
+        title: `${app.company_name}${app.position ? ` - ${app.position}` : ''}`,
+      }))
+    },
+    async loadApplications(options = {}) {
+      const force = options.force === true
+      const key = 'applications'
+      const e = getEntry(key)
       try {
-        const response = await api.get('/applications/')
-        this.applications = response.data.map(app => ({
-          ...app,
-          title: `${app.company_name}${app.position ? ` - ${app.position}` : ''}`
-        }))
+        if (!force && !e.dirty && e.fetched) {
+          this.applications = this.mapApplicationOptions(e.data)
+          return
+        }
+        const { data } = await getOrFetch(key, '/applications/', { force })
+        this.applications = this.mapApplicationOptions(data)
       } catch (error) {
         const message = formatErrorMessage(error) || 'Failed to load applications.'
         this.showErrorNotification(message)
@@ -445,42 +509,247 @@ export default {
       }
       this.interactionDialog = true
     },
-    async saveAssessment() {
+    saveAssessment() {
+      if (this.assessmentSaving) return
+      this.assessmentSaving = true
+      this.showError = false
+
+      const formData = { ...this.assessmentForm }
+      if (formData.website_url && formData.website_url.trim() && !formData.website_url.match(/^https?:\/\//)) {
+        formData.website_url = 'https://' + formData.website_url.trim()
+      }
+
+      const assessmentErrors = []
+      if (formData.application == null || formData.application === '') {
+        assessmentErrors.push('Application is required.')
+      }
+      if (!formData.deadline) assessmentErrors.push('Deadline is required.')
+      if (!formData.status) assessmentErrors.push('Status is required.')
+      if (assessmentErrors.length) {
+        this.showErrorNotification(assessmentErrors.join(' '))
+        this.assessmentSaving = false
+        return
+      }
+
+      const finish = () => {
+        this.assessmentSaving = false
+      }
+
       try {
-        // Normalize website_url - add https:// if missing
-        const formData = { ...this.assessmentForm }
-        if (formData.website_url && formData.website_url.trim() && !formData.website_url.match(/^https?:\/\//)) {
-          formData.website_url = 'https://' + formData.website_url.trim()
-        }
-        
         if (this.assessmentEditMode) {
-          await api.put(`/assessments/${formData.id}/`, formData)
+          const idx = this.assessments.findIndex((a) => a.id === formData.id)
+          if (idx === -1) {
+            finish()
+            return
+          }
+          const snapshot = { ...this.assessments[idx] }
+          const app = this.applications.find((a) => a.id === formData.application)
+          const updated = {
+            ...this.assessments[idx],
+            ...formData,
+            application_company_name: app
+              ? app.company_name
+              : this.assessments[idx].application_company_name,
+          }
+          this.assessments.splice(idx, 1, updated)
+          putCached('assessments', [...this.assessments])
+          this.assessmentDialog = false
           this.showSuccessNotification('Assessment updated successfully!')
-        } else {
-          await api.post('/assessments/', formData)
-          this.showSuccessNotification('Assessment created successfully!')
+
+          api
+            .put(`/assessments/${formData.id}/`, formData)
+            .then(({ data }) => {
+              const i = this.assessments.findIndex((x) => x.id === formData.id)
+              if (i !== -1 && data && typeof data === 'object' && Object.keys(data).length > 0) {
+                this.assessments.splice(i, 1, { ...this.assessments[i], ...data })
+                putCached('assessments', [...this.assessments])
+              }
+              markDirty('assessments')
+              markDirtyDashboardLists()
+            })
+            .catch((error) => {
+              const i = this.assessments.findIndex((x) => x.id === formData.id)
+              if (i !== -1) this.assessments.splice(i, 1, snapshot)
+              putCached('assessments', [...this.assessments])
+              markDirty('assessments')
+              this.showErrorNotification(
+                formatErrorMessage(error) ||
+                  'Failed to save assessment. Please check the form fields and try again.'
+              )
+            })
+            .finally(finish)
+          return
         }
+
+        const tempId = -Date.now()
+        const app = this.applications.find((a) => a.id === formData.application)
+        const optimistic = {
+          id: tempId,
+          application: formData.application,
+          application_company_name: app ? app.company_name : undefined,
+          deadline: formData.deadline,
+          website_url: formData.website_url,
+          recruiter_contact_name: formData.recruiter_contact_name,
+          recruiter_contact_email: formData.recruiter_contact_email,
+          recruiter_contact_phone: formData.recruiter_contact_phone,
+          status: formData.status,
+          notes: formData.notes,
+        }
+        this.assessments = [optimistic, ...this.assessments]
+        putCached('assessments', [...this.assessments])
         this.assessmentDialog = false
-        await this.loadAssessments()
+        this.showSuccessNotification('Assessment created successfully!')
+
+        api
+          .post('/assessments/', formData)
+          .then(({ data }) => {
+            const idx = this.assessments.findIndex((a) => a.id === tempId)
+            if (idx !== -1) {
+              const merged =
+                data && typeof data === 'object' ? { ...optimistic, ...data } : optimistic
+              this.assessments.splice(idx, 1, merged)
+              putCached('assessments', [...this.assessments])
+            }
+            markDirty('assessments')
+            markDirtyDashboardLists()
+          })
+          .catch((error) => {
+            const idx = this.assessments.findIndex((a) => a.id === tempId)
+            if (idx !== -1) {
+              this.assessments.splice(idx, 1)
+              putCached('assessments', [...this.assessments])
+            }
+            markDirty('assessments')
+            this.showErrorNotification(
+              formatErrorMessage(error) ||
+                'Failed to save assessment. Please check the form fields and try again.'
+            )
+          })
+          .finally(finish)
       } catch (error) {
-        const message = formatErrorMessage(error) || 'Failed to save assessment. Please check the form fields and try again.'
-        this.showErrorNotification(message)
+        finish()
+        this.showErrorNotification(
+          formatErrorMessage(error) ||
+            'Failed to save assessment. Please check the form fields and try again.'
+        )
       }
     },
-    async saveInteraction() {
+    saveInteraction() {
+      if (this.interactionSaving) return
+      this.interactionSaving = true
+      this.showError = false
+
+      const form = { ...this.interactionForm }
+      const interactionValidationError = () => {
+        if (!form.interaction_type) return 'Interaction type is required.'
+        if (!form.subject || !String(form.subject).trim()) return 'Subject is required.'
+        if (!form.notes || !String(form.notes).trim()) return 'Notes are required.'
+        if (!form.interaction_date) return 'Interaction date is required.'
+        return null
+      }
+      const validationMsg = interactionValidationError()
+      if (validationMsg) {
+        this.showErrorNotification(validationMsg)
+        this.interactionSaving = false
+        return
+      }
+
+      const finish = () => {
+        this.interactionSaving = false
+      }
+
       try {
         if (this.interactionEditMode) {
-          await api.put(`/interactions/${this.interactionForm.id}/`, this.interactionForm)
+          const idx = this.interactions.findIndex((i) => i.id === form.id)
+          if (idx === -1) {
+            finish()
+            return
+          }
+          const snapshot = { ...this.interactions[idx] }
+          const app = this.applications.find((a) => a.id === form.application)
+          const updated = {
+            ...this.interactions[idx],
+            ...form,
+            application_company_name: app
+              ? app.company_name
+              : this.interactions[idx].application_company_name,
+          }
+          this.interactions.splice(idx, 1, updated)
+          putCached('interactions', [...this.interactions])
+          this.interactionDialog = false
           this.showSuccessNotification('Interaction updated successfully!')
-        } else {
-          await api.post('/interactions/', this.interactionForm)
-          this.showSuccessNotification('Interaction created successfully!')
+
+          api
+            .put(`/interactions/${form.id}/`, form)
+            .then(({ data }) => {
+              const i = this.interactions.findIndex((x) => x.id === form.id)
+              if (i !== -1 && data && typeof data === 'object' && Object.keys(data).length > 0) {
+                this.interactions.splice(i, 1, { ...this.interactions[i], ...data })
+                putCached('interactions', [...this.interactions])
+              }
+              markDirty('interactions')
+              markDirtyDashboardLists()
+            })
+            .catch((error) => {
+              const i = this.interactions.findIndex((x) => x.id === form.id)
+              if (i !== -1) this.interactions.splice(i, 1, snapshot)
+              putCached('interactions', [...this.interactions])
+              markDirty('interactions')
+              this.showErrorNotification(
+                formatErrorMessage(error) || 'Failed to save interaction. Please try again.'
+              )
+            })
+            .finally(finish)
+          return
         }
+
+        const tempId = -Date.now()
+        const app = this.applications.find((a) => a.id === form.application)
+        const optimistic = {
+          id: tempId,
+          application: form.application,
+          application_company_name: app ? app.company_name : undefined,
+          interaction_type: form.interaction_type,
+          direction: form.direction || 'outbound',
+          subject: form.subject,
+          notes: form.notes,
+          interaction_date: form.interaction_date,
+        }
+        this.interactions = [optimistic, ...this.interactions]
+        putCached('interactions', [...this.interactions])
         this.interactionDialog = false
-        await this.loadInteractions()
+        this.showSuccessNotification('Interaction added')
+
+        api
+          .post('/interactions/', form)
+          .then(({ data }) => {
+            const idx = this.interactions.findIndex((i) => i.id === tempId)
+            if (idx !== -1) {
+              const merged =
+                data && typeof data === 'object' ? { ...optimistic, ...data } : optimistic
+              this.interactions.splice(idx, 1, merged)
+              putCached('interactions', [...this.interactions])
+            }
+            markDirty('interactions')
+            markDirtyDashboardLists()
+          })
+          .catch((error) => {
+            const idx = this.interactions.findIndex((i) => i.id === tempId)
+            if (idx !== -1) {
+              this.interactions.splice(idx, 1)
+              putCached('interactions', [...this.interactions])
+            }
+            markDirty('interactions')
+            this.showErrorNotification(
+              formatErrorMessage(error) || 'Failed to save interaction. Please try again.'
+            )
+          })
+          .finally(finish)
       } catch (error) {
-        const message = formatErrorMessage(error) || 'Failed to save interaction. Please try again.'
-        this.showErrorNotification(message)
+        finish()
+        this.showErrorNotification(
+          formatErrorMessage(error) || 'Failed to save interaction. Please try again.'
+        )
       }
     },
     editItem(item) {
@@ -492,24 +761,116 @@ export default {
         this.openInteractionDialog(interaction)
       }
     },
-    async deleteItem(item) {
+    clearDeletingActivityKey(key) {
+      if (!key || !this.deletingActivityKeys[key]) return
+      const next = { ...this.deletingActivityKeys }
+      delete next[key]
+      this.deletingActivityKeys = next
+    },
+    /**
+     * After optimistic DELETE, only restore the row if the server rejected a real failure.
+     * 404 = resource already absent (idempotent delete); keep UI as-is.
+     */
+    deleteErrorRequiresRestore(error) {
+      return error?.response?.status !== 404
+    },
+    restoreAssessmentAfterFailedDelete(snapshot) {
+      if (this.assessments.some((a) => a.id === snapshot.id)) return
+      this.assessments.push({ ...snapshot })
+      this.assessments.sort((a, b) => {
+        const da = a.deadline || ''
+        const db = b.deadline || ''
+        return da.localeCompare(db)
+      })
+      putCached('assessments', [...this.assessments])
+    },
+    restoreInteractionAfterFailedDelete(snapshot) {
+      if (this.interactions.some((i) => i.id === snapshot.id)) return
+      this.interactions.push({ ...snapshot })
+      this.interactions.sort((a, b) => {
+        const ta = new Date(a.interaction_date).getTime()
+        const tb = new Date(b.interaction_date).getTime()
+        if (Number.isNaN(ta) && Number.isNaN(tb)) return 0
+        if (Number.isNaN(ta)) return 1
+        if (Number.isNaN(tb)) return -1
+        return tb - ta
+      })
+      putCached('interactions', [...this.interactions])
+    },
+    deleteItem(item) {
       const itemType = item.originalType === 'assessment' ? 'assessment' : 'interaction'
       const itemName = itemType === 'assessment' ? 'Assessment' : 'Interaction'
-      
-      if (confirm(`Are you sure you want to delete this ${itemName.toLowerCase()}?`)) {
-        try {
-          await api.delete(`/${itemType}s/${item.originalId}/`)
-          this.showSuccessNotification(`${itemName} deleted successfully!`)
-          if (itemType === 'assessment') {
-            await this.loadAssessments()
-          } else {
-            await this.loadInteractions()
-          }
-        } catch (error) {
-          const message = formatErrorMessage(error) || `Failed to delete ${itemName.toLowerCase()}. Please try again.`
-          this.showErrorNotification(message)
+      if (!confirm(`Are you sure you want to delete this ${itemName.toLowerCase()}?`)) return
+      const key = `${itemType}-${item.originalId}`
+      if (this.deletingActivityKeys[key]) return
+      this.deletingActivityKeys = { ...this.deletingActivityKeys, [key]: true }
+
+      if (itemType === 'assessment') {
+        const idx = this.assessments.findIndex((a) => a.id === item.originalId)
+        if (idx === -1) {
+          this.clearDeletingActivityKey(key)
+          return
         }
+        const snapshot = this.assessments[idx]
+        this.assessments.splice(idx, 1)
+        putCached('assessments', [...this.assessments])
+        this.showSuccessNotification(`${itemName} removed`)
+        api
+          .delete(`/assessments/${item.originalId}/`)
+          .then(() => {
+            markDirty('assessments')
+            markDirtyDashboardLists()
+          })
+          .catch((error) => {
+            if (this.deleteErrorRequiresRestore(error)) {
+              this.restoreAssessmentAfterFailedDelete(snapshot)
+              markDirty('assessments')
+              this.showErrorNotification(
+                formatErrorMessage(error) ||
+                  `Failed to delete ${itemName.toLowerCase()}. Please try again.`
+              )
+            } else {
+              markDirty('assessments')
+              markDirtyDashboardLists()
+            }
+          })
+          .finally(() => {
+            this.clearDeletingActivityKey(key)
+          })
+        return
       }
+
+      const idx = this.interactions.findIndex((i) => i.id === item.originalId)
+      if (idx === -1) {
+        this.clearDeletingActivityKey(key)
+        return
+      }
+      const snapshot = this.interactions[idx]
+      this.interactions.splice(idx, 1)
+      putCached('interactions', [...this.interactions])
+      this.showSuccessNotification(`${itemName} removed`)
+      api
+        .delete(`/interactions/${item.originalId}/`)
+        .then(() => {
+          markDirty('interactions')
+          markDirtyDashboardLists()
+        })
+        .catch((error) => {
+          if (this.deleteErrorRequiresRestore(error)) {
+            this.restoreInteractionAfterFailedDelete(snapshot)
+            markDirty('interactions')
+            this.showErrorNotification(
+              formatErrorMessage(error) ||
+                `Failed to delete ${itemName.toLowerCase()}. Please try again.`
+            )
+          } else {
+            markDirty('interactions')
+            markDirtyDashboardLists()
+          }
+        })
+        .finally(() => {
+          this.clearDeletingActivityKey(key)
+        })
     },
     getTypeColor(type) {
       return type === 'Assessment' ? 'blue' : 'green'
