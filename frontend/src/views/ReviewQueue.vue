@@ -9,23 +9,38 @@
     <ErrorSnackbar
       v-model="showSuccess"
       :message="successMessage"
-      type="success"
+      :type="successNotificationType"
+      :multiline="successNotificationType === 'warning'"
     />
     <v-card>
       <v-card-title>
         Auto-Detected Applications Review
         <v-spacer></v-spacer>
         <v-btn
+          color="secondary"
+          class="mr-2"
+          @click="syncInbox"
+          :loading="syncing"
+          :disabled="loading || syncing"
+        >
+          <v-icon left>mdi-email-sync</v-icon>
+          Sync inbox
+        </v-btn>
+        <v-btn
           color="primary"
-          @click="loadDetectedItems"
+          @click="reloadList"
           :loading="loading"
-          :disabled="loading"
+          :disabled="loading || syncing"
         >
           <v-icon left>mdi-refresh</v-icon>
-          Refresh
+          Reload list
         </v-btn>
       </v-card-title>
       <v-card-text>
+        <p class="text-caption text-medium-emphasis mb-2">
+          <strong>Sync inbox</strong> fetches mail from Gmail and creates review items (can take several minutes).
+          <strong>Reload list</strong> only refreshes this table from the server (no new email fetch).
+        </p>
         <v-select
           v-model="selectedStatus"
           :items="statusOptions"
@@ -85,7 +100,6 @@
               small
               class="mr-2"
               @click="acceptItem(item)"
-              :loading="processingItem === item.id"
             >
               <v-icon left small>mdi-check</v-icon>
               Accept
@@ -123,6 +137,10 @@
           Merge with Existing Application
         </v-card-title>
         <v-card-text>
+          <p class="text-caption text-medium-emphasis mb-3">
+            Use Merge when this email matches an application you already track (e.g. duplicate thread). The review row is
+            closed and linked to that card—no new application is created.
+          </p>
           <p class="mb-4">
             Merge detected application <strong>{{ selectedItem?.company_name }}</strong> with an existing application.
           </p>
@@ -142,7 +160,7 @@
             color="primary"
             @click="mergeItem"
             :loading="processingItem === selectedItem?.id"
-            :disabled="!selectedApplicationId"
+            :disabled="!canSubmitMerge"
           >
             Merge
           </v-btn>
@@ -157,6 +175,44 @@ import api from '../services/api'
 import Layout from '../components/Layout.vue'
 import ErrorSnackbar from '../components/ErrorSnackbar.vue'
 import { formatErrorMessage } from '../utils/errorHandler'
+import { formatSyncNotification } from '../utils/emailSyncNotification'
+import {
+  getEntry,
+  getOrFetch,
+  autoDetectedKey,
+  markDirty,
+  markDirtyAutoDetected,
+  markDirtyDashboardLists,
+  putCached,
+} from '../services/listResourceCache'
+import {
+  EMAIL_SYNC_MAX_RESULTS,
+  EMAIL_SYNC_TIMEOUT_MS,
+} from '../constants/emailSync'
+
+/** DRF list may be a bare array or paginated `{ results: [...] }`. */
+function normalizeApplicationsListResponse(data) {
+  if (Array.isArray(data)) return data
+  if (data && typeof data === 'object' && Array.isArray(data.results)) {
+    return data.results
+  }
+  return []
+}
+
+/**
+ * Coerce merge target to a positive integer Application PK for the API.
+ * Rejects arrays/objects-without-id (Vuetify edge cases) and non-finite numbers.
+ */
+function resolveMergeApplicationId(selectedValue) {
+  if (selectedValue == null || selectedValue === '') return null
+  if (Array.isArray(selectedValue)) return null
+  if (typeof selectedValue === 'object') {
+    const parsedId = Number(selectedValue.id)
+    return Number.isFinite(parsedId) && parsedId > 0 ? parsedId : null
+  }
+  const parsedId = Number(selectedValue)
+  return Number.isFinite(parsedId) && parsedId > 0 ? parsedId : null
+}
 
 export default {
   name: 'ReviewQueue',
@@ -168,12 +224,14 @@ export default {
     return {
       detectedItems: [],
       loading: false,
+      syncing: false,
       loadingApplications: false,
       processingItem: null,
       showError: false,
       errorMessage: '',
       showSuccess: false,
       successMessage: '',
+      successNotificationType: 'success',
       selectedStatus: 'pending',
       showMergeDialog: false,
       selectedItem: null,
@@ -191,7 +249,8 @@ export default {
         { label: 'Accepted', value: 'accepted' },
         { label: 'Rejected', value: 'rejected' },
         { label: 'Merged', value: 'merged' }
-      ]
+      ],
+      skipNextActivatedRefresh: true
     }
   },
   computed: {
@@ -205,18 +264,72 @@ export default {
   async mounted() {
     await this.loadDetectedItems()
   },
+  activated() {
+    if (this.skipNextActivatedRefresh) {
+      this.skipNextActivatedRefresh = false
+      return
+    }
+    this.loadDetectedItems()
+  },
   methods: {
-    async loadDetectedItems() {
-      this.loading = true
+    reloadList() {
+      return this.loadDetectedItems({ force: true })
+    },
+    async syncInbox() {
+      this.syncing = true
       this.showError = false
+      let response = null
       try {
-        const params = {}
-        if (this.selectedStatus) {
-          params.status = this.selectedStatus
-        }
-        
-        const response = await api.get('/auto-detected-applications/', { params })
-        this.detectedItems = response.data || []
+        response = await api.post(
+          '/email-accounts/sync/',
+          { max_results: EMAIL_SYNC_MAX_RESULTS },
+          { timeout: EMAIL_SYNC_TIMEOUT_MS }
+        )
+      } catch (error) {
+        this.showError = true
+        this.errorMessage = formatErrorMessage(error)
+        return
+      } finally {
+        this.syncing = false
+      }
+
+      const { type, message } = formatSyncNotification(response.data)
+      this.successNotificationType = type
+      this.showSuccess = true
+      this.successMessage = message
+      markDirty('emailAccount')
+      markDirtyAutoDetected()
+      markDirtyDashboardLists()
+      await this.loadDetectedItems({ force: true })
+    },
+    async loadDetectedItems(options = {}) {
+      const force = options.force === true
+      const key = autoDetectedKey(this.selectedStatus)
+      const e = getEntry(key)
+      const params = {}
+      if (this.selectedStatus) {
+        params.status = this.selectedStatus
+      }
+
+      this.showError = false
+      if (!force && !e.dirty && e.fetched) {
+        this.detectedItems = Array.isArray(e.data) ? e.data : []
+        return
+      }
+      if (e.fetched) {
+        this.detectedItems = Array.isArray(e.data) ? e.data : []
+      }
+
+      // Always show table loading during a network fetch (including force after sync).
+      // Previously `loading = !e.fetched` hid the spinner when refreshing an already-loaded list.
+      this.loading = true
+      try {
+        const { data } = await getOrFetch(
+          key,
+          '/auto-detected-applications/',
+          { params, force }
+        )
+        this.detectedItems = Array.isArray(data) ? data : []
       } catch (error) {
         this.showError = true
         this.errorMessage = formatErrorMessage(error)
@@ -224,47 +337,83 @@ export default {
         this.loading = false
       }
     },
-    async acceptItem(item) {
-      this.processingItem = item.id
+    acceptItem(item) {
       this.showError = false
-      try {
-        const response = await api.post(`/auto-detected-applications/${item.id}/accept/`)
-        
-        this.showSuccess = true
-        this.successMessage = `Application created successfully for ${item.company_name}!`
-        
-        // Reload list
-        await this.loadDetectedItems()
-        
-        // Navigate to Applications page to see the new application
-        // Use setTimeout to allow success message to be visible briefly
-        setTimeout(() => {
-          this.$router.push('/applications')
-        }, 1500)
-      } catch (error) {
-        this.showError = true
-        this.errorMessage = formatErrorMessage(error)
-      } finally {
-        this.processingItem = null
-      }
+      const idx = this.detectedItems.findIndex((r) => r.id === item.id)
+      if (idx === -1) return
+
+      const snapshot = { ...item }
+      const key = autoDetectedKey(this.selectedStatus)
+      this.detectedItems.splice(idx, 1)
+      putCached(key, [...this.detectedItems])
+
+      this.successNotificationType = 'success'
+      this.showSuccess = true
+      this.successMessage = 'Navigating to Application Stages'
+
+      markDirty('applications')
+      markDirtyDashboardLists()
+
+      const navDelayMs = 320
+      setTimeout(() => {
+        this.$router.push('/applications')
+      }, navDelayMs)
+
+      api
+        .post(`/auto-detected-applications/${item.id}/accept/`)
+        .then(() => {
+          markDirtyAutoDetected()
+          putCached(key, [...this.detectedItems])
+        })
+        .catch((error) => {
+          markDirtyAutoDetected()
+          if (this.$route.name === 'ReviewQueue') {
+            const at = Math.min(idx, this.detectedItems.length)
+            this.detectedItems.splice(at, 0, snapshot)
+            putCached(key, [...this.detectedItems])
+          }
+          this.showSuccess = false
+          this.showError = true
+          this.errorMessage = formatErrorMessage(error)
+        })
     },
-    async rejectItem(item) {
+    rejectItem(item) {
+      if (this.processingItem != null) return
       this.processingItem = item.id
       this.showError = false
-      try {
-        await api.post(`/auto-detected-applications/${item.id}/reject/`)
-        
-        this.showSuccess = true
-        this.successMessage = `Detected item rejected: ${item.company_name}`
-        
-        // Reload list
-        await this.loadDetectedItems()
-      } catch (error) {
-        this.showError = true
-        this.errorMessage = formatErrorMessage(error)
-      } finally {
+
+      const idx = this.detectedItems.findIndex((r) => r.id === item.id)
+      if (idx === -1) {
         this.processingItem = null
+        return
       }
+      const snapshot = { ...item }
+      const key = autoDetectedKey(this.selectedStatus)
+      this.detectedItems.splice(idx, 1)
+      putCached(key, [...this.detectedItems])
+      this.showSuccess = true
+      this.successMessage = `Rejected: ${item.company_name}`
+
+      api
+        .post(`/auto-detected-applications/${item.id}/reject/`)
+        .then(() => {
+          markDirtyAutoDetected()
+          putCached(key, [...this.detectedItems])
+        })
+        .catch((error) => {
+          markDirtyAutoDetected()
+          if (this.$route.name === 'ReviewQueue') {
+            const at = Math.min(idx, this.detectedItems.length)
+            this.detectedItems.splice(at, 0, snapshot)
+            putCached(key, [...this.detectedItems])
+          }
+          this.showSuccess = false
+          this.showError = true
+          this.errorMessage = formatErrorMessage(error)
+        })
+        .finally(() => {
+          this.processingItem = null
+        })
     },
     async openMergeDialog(item) {
       this.selectedItem = item
@@ -273,8 +422,8 @@ export default {
       this.loadingApplications = true
       
       try {
-        const response = await api.get('/applications/')
-        this.applications = response.data || []
+        const { data } = await getOrFetch('applications', '/applications/')
+        this.applications = normalizeApplicationsListResponse(data)
       } catch (error) {
         this.showError = true
         this.errorMessage = formatErrorMessage(error)
@@ -287,28 +436,56 @@ export default {
       this.selectedItem = null
       this.selectedApplicationId = null
     },
-    async mergeItem() {
-      if (!this.selectedItem || !this.selectedApplicationId) return
+    mergeItem() {
+      if (!this.selectedItem || this.processingItem != null) return
 
-      this.processingItem = this.selectedItem.id
-      this.showError = false
-      try {
-        await api.post(`/auto-detected-applications/${this.selectedItem.id}/merge/`, {
-          application_id: this.selectedApplicationId
-        })
-        
-        this.showSuccess = true
-        this.successMessage = `Detected item merged with existing application!`
-        
-        this.closeMergeDialog()
-        // Reload list
-        await this.loadDetectedItems()
-      } catch (error) {
+      const applicationId = resolveMergeApplicationId(this.selectedApplicationId)
+      if (applicationId == null) {
         this.showError = true
-        this.errorMessage = formatErrorMessage(error)
-      } finally {
-        this.processingItem = null
+        this.errorMessage =
+          'Select an application card to merge into (from your Applications list).'
+        return
       }
+
+      const item = this.selectedItem
+      this.processingItem = item.id
+      this.showError = false
+
+      const idx = this.detectedItems.findIndex((r) => r.id === item.id)
+      const snapshot = { ...item }
+      const key = autoDetectedKey(this.selectedStatus)
+      if (idx !== -1) {
+        this.detectedItems.splice(idx, 1)
+        putCached(key, [...this.detectedItems])
+      }
+      this.closeMergeDialog()
+      this.showSuccess = true
+      this.successMessage = 'Merged with existing application'
+
+      api
+        .post(`/auto-detected-applications/${item.id}/merge/`, {
+          application_id: applicationId,
+        })
+        .then(() => {
+          markDirtyAutoDetected()
+          putCached(key, [...this.detectedItems])
+          markDirty('applications')
+          markDirtyDashboardLists()
+        })
+        .catch((error) => {
+          markDirtyAutoDetected()
+          if (this.$route.name === 'ReviewQueue' && idx !== -1) {
+            const at = Math.min(idx, this.detectedItems.length)
+            this.detectedItems.splice(at, 0, snapshot)
+            putCached(key, [...this.detectedItems])
+          }
+          this.showSuccess = false
+          this.showError = true
+          this.errorMessage = formatErrorMessage(error)
+        })
+        .finally(() => {
+          this.processingItem = null
+        })
     },
     getConfidenceColor(score) {
       if (score >= 0.8) return 'success'

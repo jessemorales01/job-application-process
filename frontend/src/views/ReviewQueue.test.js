@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import ReviewQueue from './ReviewQueue.vue'
 import api from '../services/api'
 import ErrorSnackbar from '../components/ErrorSnackbar.vue'
+import { clearAllCaches } from '../services/listResourceCache'
 
 // Mock the API
 vi.mock('../services/api', () => ({
@@ -65,6 +66,7 @@ describe('ReviewQueue - Auto-Detected Items Review', () => {
   let wrapper
 
   beforeEach(() => {
+    clearAllCaches()
     vi.clearAllMocks()
     api.get.mockReset()
     api.post.mockReset()
@@ -82,6 +84,10 @@ describe('ReviewQueue - Auto-Detected Items Review', () => {
         mocks: {
           $router: {
             push: vi.fn()
+          },
+          $route: {
+            name: 'ReviewQueue',
+            path: '/review-queue'
           }
         }
       },
@@ -307,6 +313,27 @@ describe('ReviewQueue - Auto-Detected Items Review', () => {
     }
   })
 
+  it('mergeItem sends application_id in POST body (not cleared by closeMergeDialog)', async () => {
+    const pendingItem = mockDetectedItems[0]
+    api.get.mockResolvedValueOnce({ data: [pendingItem] })
+
+    wrapper = createWrapper()
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+
+    wrapper.vm.selectedItem = pendingItem
+    wrapper.vm.selectedApplicationId = 42
+    api.post.mockResolvedValueOnce({ data: {} })
+
+    await wrapper.vm.mergeItem()
+    await flushPromises()
+
+    expect(api.post).toHaveBeenCalledWith(
+      `/auto-detected-applications/${pendingItem.id}/merge/`,
+      { application_id: 42 }
+    )
+  })
+
   it('filters items by status', async () => {
     api.get.mockResolvedValueOnce({ data: mockDetectedItems })
     api.get.mockResolvedValueOnce({ data: mockDetectedItems.filter(item => item.status === 'pending') })
@@ -355,18 +382,25 @@ describe('ReviewQueue - Auto-Detected Items Review', () => {
         }
       }
     })
-    api.get.mockResolvedValueOnce({ data: [] })
 
     wrapper = createWrapper()
     await new Promise(resolve => setTimeout(resolve, 50))
     await wrapper.vm.$nextTick()
 
-    // Trigger accept action
-    await wrapper.vm.acceptItem(pendingItem)
+    wrapper.vm.acceptItem(pendingItem)
     await wrapper.vm.$nextTick()
 
+    expect(wrapper.vm.detectedItems).toHaveLength(0)
     expect(wrapper.vm.showSuccess).toBe(true)
-    expect(wrapper.vm.successMessage).toBeTruthy()
+    expect(wrapper.vm.successMessage).toContain('Navigating to Application Stages')
+    expect(api.post).toHaveBeenCalledWith(
+      `/auto-detected-applications/${pendingItem.id}/accept/`
+    )
+
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    expect(wrapper.vm.$router.push).toHaveBeenCalledWith('/applications')
+
+    await flushPromises()
   })
 })
 
