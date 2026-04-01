@@ -29,6 +29,12 @@ SECRET_KEY = 'django-insecure-(vejq)d#i^99tp(c)=yt*5ps0k(hda7ct0$bwii%)*(f$^p=0-
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
+# Gmail OAuth uses http://localhost redirect URIs in dev; oauthlib otherwise raises
+# InsecureTransportError: "(insecure_transport) OAuth 2 MUST utilize https."
+# Never enable in production — deploy HTTPS and keep this unset.
+if DEBUG:
+    os.environ.setdefault('OAUTHLIB_INSECURE_TRANSPORT', '1')
+
 ALLOWED_HOSTS = []
 
 
@@ -85,6 +91,10 @@ DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'db.sqlite3',
+        # Longer wait when another request holds the DB lock (e.g. rapid deletes).
+        'OPTIONS': {
+            'timeout': 20,
+        },
     }
 }
 
@@ -144,6 +154,8 @@ REST_FRAMEWORK = {
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
 ]
 
 CORS_ALLOW_CREDENTIALS = True
