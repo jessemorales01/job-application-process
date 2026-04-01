@@ -58,3 +58,14 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+
+# One-off / local dev scripts (do not version)
+/check_env.py
+/clear_auto_detected_cache.py
+/debug_oauth_flow.py
+/delete_detected_apps.py
+/test_oauth_config.py
+
+# Ephemeral docs (repo keeps root README.md only)
+SOLUTION.md
+COMMIT_MESSAGE*.md
